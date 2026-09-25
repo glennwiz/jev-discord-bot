@@ -1,7 +1,7 @@
 # jev-discord-bot
 
-Discord bot that asks [Jev](https://jevmodel.org) (TypeSafe's System One
-decision model, via jevmodel.org) typed questions. Slices JEV-01 `/jev choice`,
+Discord bot that asks Jev, TypeSafe's System One decision model
+([docs.typesafe.ai](https://docs.typesafe.ai)), typed questions. Slices JEV-01 `/jev choice`,
 JEV-02 `/jev score` and JEV-03 `/jev noul`.
 
 ```
@@ -9,7 +9,7 @@ JEV-02 `/jev score` and JEV-03 `/jev noul`.
 ```
 
 The bot validates the input, defers the interaction (Discord's 3 s window),
-makes **one** `POST https://jevmodel.org/v1/systemone`, then edits the
+makes **one** `POST https://api.typesafe.ai/v1/systemone`, then edits the
 deferred reply with the picked option, the probability Jev gave *that option*,
 and Jev's separate *confidence*:
 
@@ -65,41 +65,51 @@ the action threshold is the reader's call:
 | `src/config.rs` | Environment configuration (secrets redacted in `Debug`) |
 | `tests/choice_fake_jev.rs` | Offline tests against a fake Jev HTTP server on 127.0.0.1 |
 
-## Jev wire contract (verified 2026-09-25)
+## Jev wire contract: TypeSafe System One API (verified 2026-09-26)
 
-Source: <https://jevmodel.org/docs> ("Updated September 24, 2026") and a
-live unauthenticated probe, which returned `401` with
-`{"error":{"type":"authentication_error","message":"Missing or invalid API key. ..."}}`.
+Provider: TypeSafe, `https://api.typesafe.ai` (the default `JEV_BASE_URL`).
+Source: <https://docs.typesafe.ai/api>, confirmed by one live call per
+feature on 2026-09-26 (evidence below). Keys come from
+<https://console.typesafe.ai/keys> and start with `apikey_`.
 
-- `POST /v1/systemone`, `Authorization: Bearer sk-...`, `Content-Type: application/json`,
-  optional `Idempotency-Key` (at most 100 characters; the bot sends `discord-<interaction id>`).
-- Request: `{"model":"jev-latest","state":<text>,"questions":{"pick":{"type":"choice","instructions":<question>,"criteria":{"<option>":"<option>",...}}}}`.
-- Limits: 1-8 questions; serialized state 8,000 chars; instructions 1,800;
-  choice criteria 2-20 keys, serialized 2,000 chars; 120 requests/min per key.
-- 200: `{"model":..,"answers":{"pick":{"type":"choice","choice":"<key>","probabilities":{"<key>":p,..},"confidence":c}},"usage":{"input_tokens":n,"output_tokens":m}}`.
-- Errors: `{"error":{"type","message"}}` - 401 `authentication_error`,
-  402 `insufficient_credits`, 422 `invalid_request_error`, 429
-  `rate_limit_error`, 502 `upstream_error`. None are billed. The bot does not
-  retry; it reports the status to the user.
+- `POST /v1/systemone`, `Authorization: Bearer <TYPESAFE_API_KEY>`,
+  `Content-Type: application/json`. The bot also sends
+  `Idempotency-Key: discord-<interaction id>`; TypeSafe accepts it.
+- Request: `{"model":"jev-latest","state":<text>,"questions":{"<name>":<question>}}`.
+  `jev-latest` currently resolves to `jev-1.13.0` (reported in the response's `model`).
+- Choice: `{"type":"choice","instructions":..,"criteria":{"<option>":"<description>",..}}`
+  -> `{"type":"choice","choice":"<option>","probabilities":{"<option>":p,..},"confidence":c}`.
+  The reply shows P(picked option) and confidence as separate numbers.
+- Score: `{"type":"score","instructions":..,"criteria":["<lowest>",..,"<highest>"]}` (2-10 levels)
+  -> `{"type":"score","score":s,"confidence":c,"legend":{"0":..},"probabilities":{"0":p,..}}`.
+  **The scale is 0-based**: level `i` is score `i`, `s` lies in `0..=n-1` and may be
+  fractional. TypeSafe's reference example and the live call (legend keys
+  `"0".."3"`) agree; the base is the single constant
+  `score::input::LOWEST_LEVEL_SCORE`.
+- Noul: `{"type":"noul","instructions":..}` with optional
+  `"criteria":{"true":"<yes means>","false":"<no means>"}` -> `{"type":"noul","noul":p}`,
+  P(yes) in `[0, 1]`. A noul has no confidence field; the bot shows only P(yes).
+- Errors: 401 (bad key), 403 (no key), 422 (validation), 429 (rate limit),
+  529 (overloaded), body `{"detail":{"error_type":..,"message":..}}` (also
+  `{"detail":".."}` and a 422 list form). The bot never retries. It shows the
+  status and the provider's message, clipped to 300 characters, plus
+  "try again shortly" for 429/529.
 
-Score (`src/score/jev.rs`): request `{"type":"score","instructions":..,"criteria":["<lowest>",..,"<highest>"]}`
-(2-10 levels); 200 answer `{"type":"score","score":1.4,"confidence":0.88}`, plus
-optional `probabilities` keyed by level index and an optional `legend`, both
-read by the jevmodel.org playground's renderer. **Scale base is the open
-point:** the playground labels a result "score {s} on 0-{max}" and positions
-it at `score / (n-1)`, so the bot treats the scale as 0-based (`0..=n-1`) and
-rejects anything outside it. The docs' illustrative use-case cards disagree
-(2.8 on a 3-level rubric). The first live score call settles it.
+The bot's own input bounds (20 choice options, 1,800-char question, 8,000-char
+state, 2,000-char criteria) are tighter than TypeSafe's limits (255 options,
+32k tokens of state plus question) and keep Discord replies short.
 
-Noul (`src/noul/jev.rs`): request `{"type":"noul","instructions":..}` with
-optional `"criteria":{"true":"<yes means>","false":"<no means>"}` (the key
-names the playground sends; a side left blank gets its default "Yes"/"No");
-200 answer `{"type":"noul","noul":0.12}`, P(yes) in `[0, 1]`. Docs: "There is
-no separate confidence field; the probability is the certainty measure."
+### Live evidence (2026-09-26, `tests/live_probe.rs` at d94a5b4, key redacted)
 
-Not verifiable without a key: whether option keys with spaces/punctuation are
-accepted (docs put no rule on criteria keys) and the real answer values. The
-live test settles both.
+| Feature | Request (state / question) | Response |
+|---|---|---|
+| choice | "Two of us are vegetarian and we have 30 minutes." / pizza, sushi, tacos | `choice:"sushi"`, probabilities sushi 0.46, pizza 0.42, tacos 0.12, `confidence:0.2` |
+| score | "Production database is down for every customer, ..." / routine..critical | `score:3.0`, `confidence:1.0`, legend `"0":"routine".."3":"critical"`, P(3)=1.0 |
+| noul | "The customer was billed twice and wants a refund today." / needs a human? | `noul:0.78` |
+
+All three were HTTP 200, model `jev-1.13.0`, 335 / 323 / 285 input tokens.
+Re-run (3 paid calls) in tmux `jev:live`:
+`cargo test --offline --test live_probe -- --ignored --nocapture --test-threads=1`.
 
 ## Build and test (ArchBlackMage test box)
 
@@ -138,7 +148,7 @@ cargo build --release --offline
    WhiteMage/DarkMage bots), invite it to the test guild with the
    `applications.commands` and `bot` scopes. No privileged intents are needed.
 2. On the box: `cp .env.example .env && chmod 600 .env`, then fill in
-   `DISCORD_TOKEN`, `DISCORD_GUILD_ID` and `JEVMODEL_API_KEY`.
+   `DISCORD_TOKEN`, `DISCORD_GUILD_ID` and `TYPESAFE_API_KEY`.
 3. `./target/release/jev-discord-bot` - logs `registered 1 guild command(s)`.
 4. In the test guild: `/jev choice question:Where should the team eat? options:pizza, sushi, tacos`
    and `/jev score text:Billed twice, wants a refund today. question:How urgent is this? levels:routine, soon, urgent, critical`

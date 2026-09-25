@@ -1,26 +1,27 @@
 //! Parse and bound the user's `/jev score` input before anything is sent.
 //!
-//! Limits mirror the jevmodel.org validator (docs, 2026-09-24) so a bad
-//! request is refused here with a readable message instead of a 422.
+//! These are the bot's own bounds. They sit inside TypeSafe's limits
+//! (docs.typesafe.ai: 255 choice options, 2-10 score levels, 32k tokens of
+//! state plus question), so a bad request is refused here with a readable
+//! message instead of a 422.
 
 use std::fmt;
 
-/// Jev accepts an ordered array of 2-10 levels for a `score` question.
+/// TypeSafe accepts an ordered array of 2-10 levels for a `score` question.
 pub const MIN_LEVELS: usize = 2;
 pub const MAX_LEVELS: usize = 10;
 /// Our own cap per level label; keeps the Discord legend short.
 pub const MAX_LEVEL_CHARS: usize = 100;
-/// Jev: `instructions` is at most 1,800 characters.
+/// Our cap on `instructions`.
 pub const MAX_QUESTION_CHARS: usize = 1_800;
-/// Jev: serialized `state` is at most 8,000 characters.
+/// Our cap on serialized `state`.
 pub const MAX_STATE_CHARS: usize = 8_000;
-/// Jev: serialized `criteria` is at most 2,000 characters per question.
+/// Our cap on serialized `criteria`.
 pub const MAX_CRITERIA_CHARS: usize = 2_000;
 
 /// The score Jev gives the LOWEST level; level `i` scores this plus `i`.
-/// This is the only place the scale base lives. The jevmodel.org playground
-/// renders "score {s} on 0-{max}", hence 0; if the live call shows 1-based
-/// scores, change this to 1 and nothing else.
+/// This is the only place the scale base lives. 0, per TypeSafe's API
+/// reference and the 2026-09-26 live call (legend keys "0".."3").
 pub const LOWEST_LEVEL_SCORE: usize = 0;
 
 /// A validated score request. `levels` is ordered lowest first; level `i`

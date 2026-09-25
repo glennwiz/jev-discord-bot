@@ -3,13 +3,15 @@
 use std::fmt;
 use std::time::Duration;
 
-use crate::choice::jev::DEFAULT_BASE_URL;
+/// The TypeSafe System One API (docs.typesafe.ai/api).
+pub const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
 
 pub struct Config {
     pub discord_token: String,
     /// The test guild the `/jev` command is registered in.
     pub guild_id: u64,
-    pub jev_api_key: String,
+    /// TypeSafe API key (`apikey_...`, console.typesafe.ai/keys).
+    pub api_key: String,
     pub jev_base_url: String,
     pub jev_timeout: Duration,
 }
@@ -19,7 +21,7 @@ impl fmt::Debug for Config {
         f.debug_struct("Config")
             .field("discord_token", &"<redacted>")
             .field("guild_id", &self.guild_id)
-            .field("jev_api_key", &"<redacted>")
+            .field("api_key", &"<redacted>")
             .field("jev_base_url", &self.jev_base_url)
             .field("jev_timeout", &self.jev_timeout)
             .finish()
@@ -47,7 +49,7 @@ impl Config {
                 .ok()
                 .filter(|id| *id != 0)
                 .ok_or_else(|| "DISCORD_GUILD_ID must be a nonzero numeric guild id".to_string())?,
-            jev_api_key: required("JEVMODEL_API_KEY")?,
+            api_key: required("TYPESAFE_API_KEY")?,
             jev_base_url: optional("JEV_BASE_URL").unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
             jev_timeout: Duration::from_secs(timeout_secs),
         })

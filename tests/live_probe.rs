@@ -1,6 +1,6 @@
-//! Jev-only live contract probe: exactly one real call each for choice,
+//! Live TypeSafe contract probe: exactly one real call each for choice,
 //! score and noul (3 paid calls). Ignored by default - `cargo test` never
-//! runs it. Run on purpose, with JEVMODEL_API_KEY in .env:
+//! runs it. Run on purpose, with TYPESAFE_API_KEY in .env:
 //!
 //!     cargo test --offline --test live_probe -- --ignored --nocapture
 //!
@@ -64,17 +64,13 @@ async fn call(
 }
 
 #[tokio::test]
-#[ignore = "live: makes 3 paid jevmodel.org calls"]
+#[ignore = "live: makes 3 paid TypeSafe calls"]
 async fn live_probe_one_call_per_feature() {
     let _ = dotenvy::dotenv();
-    let key = std::env::var("JEVMODEL_API_KEY").expect("JEVMODEL_API_KEY not set");
+    let key = std::env::var("TYPESAFE_API_KEY").expect("TYPESAFE_API_KEY not set");
     let key = key.trim();
-    let base = std::env::var("JEV_BASE_URL").unwrap_or_else(|_| "https://jevmodel.org".into());
-    println!(
-        "key: {} chars, starts with sk-: {}",
-        key.len(),
-        key.starts_with("sk-")
-    );
+    let base = std::env::var("JEV_BASE_URL").unwrap_or_else(|_| "https://api.typesafe.ai".into());
+    println!("key: {} chars, base: {base}", key.len());
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()

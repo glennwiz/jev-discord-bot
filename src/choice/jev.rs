@@ -1,14 +1,16 @@
-//! One bounded call to jevmodel.org `POST /v1/systemone` for a choice.
+//! One bounded call to the TypeSafe System One API for a choice.
 //!
-//! Wire contract (verified from https://jevmodel.org/docs, updated
-//! 2026-09-24, and a live unauthenticated 401 probe on 2026-09-25):
+//! Wire contract: https://docs.typesafe.ai/api (read 2026-09-26), confirmed
+//! by a live call on 2026-09-26 (jev-1.13.0):
 //!
-//! request  `{"model":"jev-latest","state":..,"questions":{"pick":{"type":"choice",
-//!           "instructions":..,"criteria":{"<key>":"<description>",..}}}}`
-//!          with `Authorization: Bearer sk-..`, optional `Idempotency-Key` (<=100 chars).
-//! 200      `{"model":..,"answers":{"pick":{"type":"choice","choice":"<key>",
+//! request  `POST https://api.typesafe.ai/v1/systemone`, `Authorization: Bearer <key>`,
+//!          `{"model":"jev-latest","state":..,"questions":{"pick":{"type":"choice",
+//!           "instructions":..,"criteria":{"<key>":"<description>",..}}}}`.
+//!          We also send `Idempotency-Key` (<=100 chars); TypeSafe accepts it.
+//! 200      `{"model":"jev-1.13.0","answers":{"pick":{"type":"choice","choice":"<key>",
 //!           "probabilities":{"<key>":p,..},"confidence":c}},"usage":{"input_tokens":n,..}}`
-//! error    `{"error":{"type":"..","message":".."}}` with 401/402/422/429/502.
+//! error    401/403/422/429/529 with `{"detail":{"error_type":..,"message":..}}`
+//!          (see [`error_details`] for every shape we read).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -19,7 +21,6 @@ use serde_json::json;
 
 use super::input::ChoiceRequest;
 
-pub const DEFAULT_BASE_URL: &str = "https://jevmodel.org";
 pub const MODEL: &str = "jev-latest";
 /// The single question name we send; answers are keyed by it.
 pub const QUESTION_NAME: &str = "pick";
@@ -42,7 +43,7 @@ pub struct ChoiceOutcome {
 pub enum JevError {
     /// No complete answer within the configured timeout.
     Timeout,
-    /// Non-2xx; `kind`/`message` come from Jev's error envelope when present.
+    /// Non-2xx; `kind`/`message` come from the provider's error body when present.
     Status {
         status: u16,
         kind: Option<String>,
@@ -71,6 +72,9 @@ impl fmt::Display for JevError {
                 }
                 if let Some(m) = message {
                     write!(f, ": {m}")?;
+                }
+                if matches!(status, 429 | 529) {
+                    write!(f, " - Jev is busy, try again shortly")?;
                 }
                 Ok(())
             }
@@ -157,13 +161,11 @@ impl JevClient {
         }
 
         if !status.is_success() {
-            let envelope = serde_json::from_slice::<ErrorEnvelope>(&body)
-                .ok()
-                .map(|e| e.error);
+            let (kind, message) = error_details(&body);
             return Err(JevError::Status {
                 status: status.as_u16(),
-                kind: envelope.as_ref().and_then(|e| e.kind.clone()),
-                message: envelope.and_then(|e| e.message),
+                kind,
+                message,
             });
         }
         parse_choice(&body, req)
@@ -259,14 +261,37 @@ struct WireUsage {
     input_tokens: Option<u64>,
 }
 
-#[derive(Deserialize)]
-struct ErrorEnvelope {
-    error: ErrorBody,
+/// Longest provider error message passed on to Discord.
+const MAX_ERROR_MESSAGE_CHARS: usize = 300;
+
+/// `(kind, message)` from a non-2xx body, bounded. TypeSafe sends
+/// `{"detail":{"error_type":..,"message":..}}`, a bare `{"detail":".."}`, or
+/// for some 422s `{"detail":[{"msg":..},..]}`; OpenAI-style gateways send
+/// `{"error":{"type":..,"message":..}}`. Anything else gives `(None, None)`.
+fn error_details(body: &[u8]) -> (Option<String>, Option<String>) {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return (None, None);
+    };
+    let text = |v: Option<&serde_json::Value>| v.and_then(|s| s.as_str()).map(bounded);
+    if let Some(e) = v.get("error") {
+        return (text(e.get("type")), text(e.get("message")));
+    }
+    match v.get("detail") {
+        Some(d @ serde_json::Value::String(_)) => (None, text(Some(d))),
+        Some(serde_json::Value::Array(items)) => {
+            (None, text(items.first().and_then(|i| i.get("msg"))))
+        }
+        Some(d) => (text(d.get("error_type")), text(d.get("message"))),
+        None => (None, None),
+    }
 }
 
-#[derive(Deserialize)]
-struct ErrorBody {
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    message: Option<String>,
+fn bounded(s: &str) -> String {
+    if s.chars().count() <= MAX_ERROR_MESSAGE_CHARS {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(MAX_ERROR_MESSAGE_CHARS - 1).collect();
+        t.push('…');
+        t
+    }
 }

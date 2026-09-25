@@ -13,7 +13,7 @@ use noul::{render, InputError, NoulClient, NoulError, NoulRequest};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
-const FAKE_KEY: &str = "sk-test-not-a-real-key";
+const FAKE_KEY: &str = "apikey_test-not-a-real-key";
 
 fn escalate() -> NoulRequest {
     NoulRequest::parse(
@@ -184,12 +184,12 @@ async fn timeout_is_bounded_and_reported() {
 async fn http_failures_surface_status_without_retry() {
     for (status, kind) in [
         (401, "authentication_error"),
-        (402, "insufficient_credits"),
+        (403, "permission_error"),
         (422, "invalid_request_error"),
         (429, "rate_limit_error"),
-        (502, "upstream_error"),
+        (529, "overloaded_error"),
     ] {
-        let body = json!({"error": {"type": kind, "message": "nope"}}).to_string();
+        let body = json!({"detail": {"error_type": kind, "message": "nope"}}).to_string();
         let (base, seen) = fake_jev(Reply::Json(status, body)).await;
         let err = client(&base, 2_000)
             .ask(&escalate(), None)
@@ -325,4 +325,47 @@ async fn oversized_response_is_refused() {
 fn client_debug_redacts_key() {
     let c = NoulClient::new("http://127.0.0.1:1", FAKE_KEY, Duration::from_secs(1)).unwrap();
     assert!(!format!("{c:?}").contains(FAKE_KEY));
+}
+
+#[tokio::test]
+async fn provider_error_shapes_are_all_read_and_bounded() {
+    let long = "m".repeat(1_000);
+    let bounded = format!("{}…", "m".repeat(299));
+    let cases: Vec<(u16, Value, Option<&str>, Option<String>)> = vec![
+        (
+            401,
+            json!({"error": {"type": "authentication_error", "message": "bad key"}}),
+            Some("authentication_error"),
+            Some("bad key".into()),
+        ),
+        (404, json!({"detail": "Not Found"}), None, Some("Not Found".into())),
+        (
+            422,
+            json!({"detail": [{"loc": ["body", "state"], "msg": "field required", "type": "missing"}]}),
+            None,
+            Some("field required".into()),
+        ),
+        (
+            529,
+            json!({"detail": {"error_type": "overloaded_error", "message": long}}),
+            Some("overloaded_error"),
+            Some(bounded),
+        ),
+    ];
+    for (status, body, kind, message) in cases {
+        let (base, _) = fake_jev(Reply::Json(status, body.to_string())).await;
+        let err = client(&base, 2_000).ask(&escalate(), None).await.unwrap_err();
+        let want = NoulError::Status {
+            status,
+            kind: kind.map(String::from),
+            message,
+        };
+        assert_eq!(err, want, "status {status}");
+    }
+    let busy = NoulError::Status {
+        status: 529,
+        kind: None,
+        message: None,
+    };
+    assert!(render::jev_error(&busy).contains("busy, try again shortly"));
 }

@@ -418,16 +418,16 @@ async fn main() {
     };
     eprintln!("config: {cfg:?}");
     let jev =
-        JevClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout).unwrap_or_else(|e| {
+        JevClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout).unwrap_or_else(|e| {
             eprintln!("jev client error: {e}");
             std::process::exit(2);
         });
-    let score = ScoreClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout)
+    let score = ScoreClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout)
         .unwrap_or_else(|e| {
             eprintln!("jev client error: {e}");
             std::process::exit(2);
         });
-    let noul = NoulClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout)
+    let noul = NoulClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout)
         .unwrap_or_else(|e| {
             eprintln!("jev client error: {e}");
             std::process::exit(2);

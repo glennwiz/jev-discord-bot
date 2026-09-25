@@ -1,19 +1,21 @@
 //! Parse and bound the user's `/jev noul` input before anything is sent.
 //!
-//! Limits mirror the jevmodel.org validator (docs, 2026-09-24) so a bad
-//! request is refused here with a readable message instead of a 422.
+//! These are the bot's own bounds. They sit inside TypeSafe's limits
+//! (docs.typesafe.ai: 255 choice options, 2-10 score levels, 32k tokens of
+//! state plus question), so a bad request is refused here with a readable
+//! message instead of a 422.
 
 use std::fmt;
 
-/// Jev: `instructions` is at most 1,800 characters.
+/// Our cap on `instructions`.
 pub const MAX_QUESTION_CHARS: usize = 1_800;
-/// Jev: serialized `state` is at most 8,000 characters.
+/// Our cap on serialized `state`.
 pub const MAX_STATE_CHARS: usize = 8_000;
-/// Jev: serialized `criteria` is at most 2,000 characters per question.
+/// Our cap on serialized `criteria`.
 pub const MAX_CRITERIA_CHARS: usize = 2_000;
 /// Our own cap per yes/no description.
 pub const MAX_MEANING_CHARS: usize = 500;
-/// What the jevmodel.org playground sends for a side left undescribed.
+/// What we send for a side the user left undescribed.
 pub const DEFAULT_YES: &str = "Yes";
 pub const DEFAULT_NO: &str = "No";
 

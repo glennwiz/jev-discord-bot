@@ -1,20 +1,22 @@
 //! Parse and bound the user's `/jev choice` input before anything is sent.
 //!
-//! Limits mirror the jevmodel.org validator (docs, 2026-09-24) so a bad
-//! request is refused here with a readable message instead of a 422.
+//! These are the bot's own bounds. They sit inside TypeSafe's limits
+//! (docs.typesafe.ai: 255 choice options, 2-10 score levels, 32k tokens of
+//! state plus question), so a bad request is refused here with a readable
+//! message instead of a 422.
 
 use std::fmt;
 
-/// Jev accepts 2-20 option keys for a `choice` question.
+/// Our range for choice options (TypeSafe allows up to 255).
 pub const MIN_OPTIONS: usize = 2;
 pub const MAX_OPTIONS: usize = 20;
 /// Our own cap per option label; keeps the Discord reply short.
 pub const MAX_OPTION_CHARS: usize = 100;
-/// Jev: `instructions` is at most 1,800 characters.
+/// Our cap on `instructions`.
 pub const MAX_QUESTION_CHARS: usize = 1_800;
-/// Jev: serialized `state` is at most 8,000 characters.
+/// Our cap on serialized `state`.
 pub const MAX_STATE_CHARS: usize = 8_000;
-/// Jev: serialized `criteria` is at most 2,000 characters per question.
+/// Our cap on serialized `criteria`.
 pub const MAX_CRITERIA_CHARS: usize = 2_000;
 
 /// A validated choice: what to decide, the distinct options, optional context.

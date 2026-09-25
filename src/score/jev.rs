@@ -1,23 +1,23 @@
-//! One bounded call to jevmodel.org `POST /v1/systemone` for a score.
+//! One bounded call to the TypeSafe System One API for a score.
 //!
-//! Wire contract (https://jevmodel.org/docs updated 2026-09-24, plus the
-//! jevmodel.org playground's own renderer, read 2026-09-25):
+//! Wire contract: https://docs.typesafe.ai/api (read 2026-09-26), confirmed
+//! by a live call on 2026-09-26 (jev-1.13.0):
 //!
-//! request  `{"model":"jev-latest","state":..,"questions":{"score":{"type":"score",
-//!           "instructions":..,"criteria":["<lowest>",..,"<highest>"]}}}`
-//! 200      `{"answers":{"score":{"type":"score","score":1.4,"confidence":0.88}},..}`
-//!          The playground also reads optional `probabilities` keyed by level
-//!          index ("0".."n-1") and an optional `legend`; we accept both.
+//! request  `POST https://api.typesafe.ai/v1/systemone`, `Authorization: Bearer <key>`,
+//!          `{"model":"jev-latest","state":..,"questions":{"score":{"type":"score",
+//!           "instructions":..,"criteria":["<lowest>",..,"<highest>"]}}}` (2-10 levels).
+//! 200      `{"answers":{"score":{"type":"score","score":3.0,"confidence":1.0,
+//!           "legend":{"0":"<lowest>",..},"probabilities":{"0":p,..}}},..}`
 //! scale    0-based: level `i` of `criteria` is score `i`, so a score lies in
-//!          `0..=n-1` and may be fractional. Source: the playground labels a
-//!          result "score {s} on 0-{max}" and places it at `score / (n-1)`.
-//!          The docs' illustrative use-case cards disagree (2.8 on a 3-level
-//!          rubric) - the live run is the check. The base is the single
-//!          constant `input::LOWEST_LEVEL_SCORE`.
-//! error    `{"error":{"type":"..","message":".."}}` with 401/402/422/429/502.
+//!          `0..=n-1` and may be fractional. TypeSafe's reference example
+//!          and the live call (legend keys "0".."3", score 3.0 for a clearly
+//!          top-level state) agree. The base is the single constant
+//!          `input::LOWEST_LEVEL_SCORE`.
+//! error    401/403/422/429/529 with `{"detail":{"error_type":..,"message":..}}`
+//!          (see [`error_details`] for every shape we read).
 //!
 //! The transport mirrors `choice::jev` line for line rather than sharing it,
-//! so the approved choice slice stays untouched.
+//! so the choice slice stays untouched.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -51,7 +51,7 @@ pub struct ScoreOutcome {
 pub enum ScoreError {
     /// No complete answer within the configured timeout.
     Timeout,
-    /// Non-2xx; `kind`/`message` come from Jev's error envelope when present.
+    /// Non-2xx; `kind`/`message` come from the provider's error body when present.
     Status {
         status: u16,
         kind: Option<String>,
@@ -80,6 +80,9 @@ impl fmt::Display for ScoreError {
                 }
                 if let Some(m) = message {
                     write!(f, ": {m}")?;
+                }
+                if matches!(status, 429 | 529) {
+                    write!(f, " - Jev is busy, try again shortly")?;
                 }
                 Ok(())
             }
@@ -166,13 +169,11 @@ impl ScoreClient {
         }
 
         if !status.is_success() {
-            let envelope = serde_json::from_slice::<ErrorEnvelope>(&body)
-                .ok()
-                .map(|e| e.error);
+            let (kind, message) = error_details(&body);
             return Err(ScoreError::Status {
                 status: status.as_u16(),
-                kind: envelope.as_ref().and_then(|e| e.kind.clone()),
-                message: envelope.and_then(|e| e.message),
+                kind,
+                message,
             });
         }
         parse_score(&body, req)
@@ -267,14 +268,37 @@ struct WireUsage {
     input_tokens: Option<u64>,
 }
 
-#[derive(Deserialize)]
-struct ErrorEnvelope {
-    error: ErrorBody,
+/// Longest provider error message passed on to Discord.
+const MAX_ERROR_MESSAGE_CHARS: usize = 300;
+
+/// `(kind, message)` from a non-2xx body, bounded. TypeSafe sends
+/// `{"detail":{"error_type":..,"message":..}}`, a bare `{"detail":".."}`, or
+/// for some 422s `{"detail":[{"msg":..},..]}`; OpenAI-style gateways send
+/// `{"error":{"type":..,"message":..}}`. Anything else gives `(None, None)`.
+fn error_details(body: &[u8]) -> (Option<String>, Option<String>) {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return (None, None);
+    };
+    let text = |v: Option<&serde_json::Value>| v.and_then(|s| s.as_str()).map(bounded);
+    if let Some(e) = v.get("error") {
+        return (text(e.get("type")), text(e.get("message")));
+    }
+    match v.get("detail") {
+        Some(d @ serde_json::Value::String(_)) => (None, text(Some(d))),
+        Some(serde_json::Value::Array(items)) => {
+            (None, text(items.first().and_then(|i| i.get("msg"))))
+        }
+        Some(d) => (text(d.get("error_type")), text(d.get("message"))),
+        None => (None, None),
+    }
 }
 
-#[derive(Deserialize)]
-struct ErrorBody {
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    message: Option<String>,
+fn bounded(s: &str) -> String {
+    if s.chars().count() <= MAX_ERROR_MESSAGE_CHARS {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(MAX_ERROR_MESSAGE_CHARS - 1).collect();
+        t.push('…');
+        t
+    }
 }
