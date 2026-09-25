@@ -7,6 +7,10 @@ mod config;
 mod noul;
 mod score;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
 use serenity::all::{
     CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption,
     CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse, EventHandler,
@@ -25,6 +29,49 @@ struct Handler {
     jev: JevClient,
     score: ScoreClient,
     noul: NoulClient,
+    /// Interactions being answered right now; shutdown waits for these.
+    in_flight: Arc<AtomicUsize>,
+}
+
+/// Counts one in-flight interaction for as long as it lives.
+struct InFlight(Arc<AtomicUsize>);
+
+impl InFlight {
+    fn start(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        InFlight(count.clone())
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// How long shutdown waits for in-flight replies before exiting anyway.
+/// Must stay below `TimeoutStopSec` in deploy/jev-discord-bot.service, or
+/// systemd SIGKILLs the process mid-drain.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Resolves on SIGTERM (systemd stop) or Ctrl-C.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = term.recv() => eprintln!("shutdown: SIGTERM received"),
+                    _ = tokio::signal::ctrl_c() => eprintln!("shutdown: Ctrl-C received"),
+                }
+                return;
+            }
+            Err(e) => eprintln!("shutdown: cannot watch SIGTERM ({e}); Ctrl-C only"),
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+    eprintln!("shutdown: Ctrl-C received");
 }
 
 fn jev_command() -> CreateCommand {
@@ -240,6 +287,7 @@ impl EventHandler for Handler {
         let Some((sub, args)) = sub_args(&cmd) else {
             return;
         };
+        let _in_flight = InFlight::start(&self.in_flight);
         let result = match sub {
             "choice" => self.handle_choice(&ctx, &cmd, &args).await,
             "score" => self.handle_score(&ctx, &cmd, &args).await,
@@ -274,7 +322,8 @@ async fn main() {
         eprintln!("jev client error: {e}");
         std::process::exit(2);
     });
-    let handler = Handler { guild: GuildId::new(cfg.guild_id), jev, score, noul };
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let handler = Handler { guild: GuildId::new(cfg.guild_id), jev, score, noul, in_flight: in_flight.clone() };
     // Slash commands arrive without privileged or message intents.
     let mut client = Client::builder(&cfg.discord_token, GatewayIntents::empty())
         .event_handler(handler)
@@ -283,8 +332,24 @@ async fn main() {
             eprintln!("discord client error: {e}");
             std::process::exit(1);
         });
+
+    // On SIGTERM: stop taking new interactions by closing the gateway, then
+    // let replies already in progress finish (bounded by DRAIN_TIMEOUT).
+    let shards = client.shard_manager.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        shards.shutdown_all().await;
+    });
     if let Err(e) = client.start().await {
         eprintln!("gateway stopped: {e}");
         std::process::exit(1);
+    }
+    let deadline = tokio::time::Instant::now() + DRAIN_TIMEOUT;
+    while in_flight.load(Ordering::SeqCst) > 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    match in_flight.load(Ordering::SeqCst) {
+        0 => eprintln!("shutdown: clean"),
+        n => eprintln!("shutdown: {n} interaction(s) still in flight after {DRAIN_TIMEOUT:?}; exiting"),
     }
 }

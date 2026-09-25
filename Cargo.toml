@@ -8,7 +8,7 @@ publish = false
 # Discord Gateway + interactions. Uses reqwest 0.12 internally, so our own
 # Jev client shares that one HTTP stack instead of compiling a second.
 serenity = { version = "0.12", default-features = false, features = ["builder", "client", "gateway", "model", "http", "rustls_backend"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 # preserve_order keeps the user's option order in the request we send.
