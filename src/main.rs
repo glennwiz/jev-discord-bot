@@ -17,8 +17,8 @@ use serenity::all::{
     EditInteractionResponse, EventHandler, GatewayIntents, GuildId, Interaction, Ready,
 };
 use serenity::async_trait;
-use serenity::http::HttpBuilder;
 use serenity::client::ClientBuilder;
+use serenity::http::HttpBuilder;
 
 use choice::{render, ChoiceRequest, JevClient};
 use config::Config;

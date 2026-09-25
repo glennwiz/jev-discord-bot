@@ -55,7 +55,11 @@ struct Resp {
 
 impl Resp {
     fn json(status: u16, body: impl Into<String>) -> Self {
-        Resp { status, body: body.into(), delay: Duration::ZERO }
+        Resp {
+            status,
+            body: body.into(),
+            delay: Duration::ZERO,
+        }
     }
 }
 
@@ -67,10 +71,14 @@ async fn http_server(handler: Handler, log: Arc<Mutex<Vec<Req>>>) -> u16 {
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
         loop {
-            let Ok((mut sock, _)) = listener.accept().await else { return };
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
             let (handler, log) = (handler.clone(), log.clone());
             tokio::spawn(async move {
-                let Some(req) = read_req(&mut sock).await else { return };
+                let Some(req) = read_req(&mut sock).await else {
+                    return;
+                };
                 log.lock().unwrap().push(req.clone());
                 let resp = handler(req).await;
                 tokio::time::sleep(resp.delay).await;
@@ -118,7 +126,12 @@ async fn read_req(sock: &mut TcpStream) -> Option<Req> {
         buf.extend_from_slice(&tmp[..n]);
     }
     let body = serde_json::from_slice(&buf[head_end..head_end + len]).unwrap_or(Value::Null);
-    Some(Req { method, path, body, at: Instant::now() })
+    Some(Req {
+        method,
+        path,
+        body,
+        at: Instant::now(),
+    })
 }
 
 // ---- fake Discord HTTP API ---------------------------------------------
@@ -132,12 +145,18 @@ fn discord_handler(ws_port: u16, fail_edits: FailEdits) -> Handler {
         Box::pin(async move {
             let p = req.path.split('?').next().unwrap_or("").to_string();
             if req.method == "GET" && p == "/api/v10/gateway" {
-                return Resp::json(200, json!({"url": format!("ws://127.0.0.1:{ws_port}")}).to_string());
+                return Resp::json(
+                    200,
+                    json!({"url": format!("ws://127.0.0.1:{ws_port}")}).to_string(),
+                );
             }
             if req.method == "PUT" && p.ends_with(&format!("/guilds/{GUILD_ID}/commands")) {
                 return Resp::json(200, "[]");
             }
-            if req.method == "POST" && p.starts_with("/api/v10/interactions/") && p.ends_with("/callback") {
+            if req.method == "POST"
+                && p.starts_with("/api/v10/interactions/")
+                && p.ends_with("/callback")
+            {
                 return Resp::json(204, "");
             }
             if req.method == "PATCH" && p.ends_with("/messages/@original") {
@@ -177,8 +196,12 @@ async fn gateway(mut dispatch: mpsc::UnboundedReceiver<Value>) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
-        let Ok((sock, _)) = listener.accept().await else { return };
-        let Ok(mut ws) = tokio_tungstenite::accept_async(sock).await else { return };
+        let Ok((sock, _)) = listener.accept().await else {
+            return;
+        };
+        let Ok(mut ws) = tokio_tungstenite::accept_async(sock).await else {
+            return;
+        };
         let hello = json!({"op": 10, "d": {"heartbeat_interval": 45_000}, "s": null, "t": null});
         let _ = ws.send(WsMessage::Text(hello.to_string())).await;
         let mut seq = 0u64;
@@ -225,7 +248,10 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A `/jev <sub>` command interaction with a fresh snowflake id.
 fn interaction(token: &str, sub: &str, opts: &[(&str, &str)]) -> (String, Value) {
-    let ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let id = ((ms - 1_420_070_400_000) << 22) + NEXT_ID.fetch_add(1, Ordering::SeqCst);
     let options: Vec<Value> = opts
         .iter()
@@ -251,7 +277,9 @@ type JevQueue = Arc<Mutex<VecDeque<Resp>>>;
 fn jev_handler(queue: JevQueue) -> Handler {
     Arc::new(move |_req: Req| {
         let next = queue.lock().unwrap().pop_front();
-        Box::pin(async move { next.unwrap_or_else(|| Resp::json(500, r#"{"detail":"queue empty"}"#)) })
+        Box::pin(
+            async move { next.unwrap_or_else(|| Resp::json(500, r#"{"detail":"queue empty"}"#)) },
+        )
     })
 }
 
@@ -281,7 +309,10 @@ impl Bot {
             .env("TYPESAFE_API_KEY", API_KEY)
             .env("JEV_BASE_URL", format!("http://127.0.0.1:{jev_port}"))
             .env("JEV_TIMEOUT_SECS", "2")
-            .env("DISCORD_API_PROXY", format!("http://127.0.0.1:{discord_port}"))
+            .env(
+                "DISCORD_API_PROXY",
+                format!("http://127.0.0.1:{discord_port}"),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -318,15 +349,19 @@ async fn wait_for(what: &str, secs: u64, bot: &Bot, mut cond: impl FnMut() -> bo
     let deadline = Instant::now() + Duration::from_secs(secs);
     while !cond() {
         if Instant::now() > deadline {
-            panic!("timed out waiting for {what}\nbot stderr:\n{}", bot.log().join("\n"));
+            panic!(
+                "timed out waiting for {what}\nbot stderr:\n{}",
+                bot.log().join("\n")
+            );
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
 fn find<'a>(log: &'a [Req], method: &str, token: &str, tail: &str) -> Option<&'a Req> {
-    log.iter()
-        .find(|r| r.method == method && r.path.contains(&format!("/{token}/")) && r.path.ends_with(tail))
+    log.iter().find(|r| {
+        r.method == method && r.path.contains(&format!("/{token}/")) && r.path.ends_with(tail)
+    })
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -335,7 +370,11 @@ async fn second_instance_survives_failures_and_drains_on_sigterm() {
     let ws_port = gateway(rx).await;
     let fail_edits: FailEdits = Arc::new(Mutex::new(Vec::new()));
     let discord_log = Arc::new(Mutex::new(Vec::new()));
-    let discord_port = http_server(discord_handler(ws_port, fail_edits.clone()), discord_log.clone()).await;
+    let discord_port = http_server(
+        discord_handler(ws_port, fail_edits.clone()),
+        discord_log.clone(),
+    )
+    .await;
     let jev_queue: JevQueue = Arc::new(Mutex::new(VecDeque::new()));
     let jev_log = Arc::new(Mutex::new(Vec::new()));
     let jev_port = http_server(jev_handler(jev_queue.clone()), jev_log.clone()).await;
@@ -348,8 +387,14 @@ async fn second_instance_survives_failures_and_drains_on_sigterm() {
         bot.log().iter().any(|l| l.starts_with("registered "))
     })
     .await;
-    assert!(bot.log().iter().any(|l| l.starts_with("WARN: DISCORD_API_PROXY is set")));
-    let put = dlog().into_iter().find(|r| r.method == "PUT").expect("command registration");
+    assert!(bot
+        .log()
+        .iter()
+        .any(|l| l.starts_with("WARN: DISCORD_API_PROXY is set")));
+    let put = dlog()
+        .into_iter()
+        .find(|r| r.method == "PUT")
+        .expect("command registration");
     let subs: Vec<&str> = put.body[0]["options"]
         .as_array()
         .unwrap()
@@ -359,14 +404,29 @@ async fn second_instance_survives_failures_and_drains_on_sigterm() {
     assert_eq!(subs, ["choice", "score", "noul"]);
 
     // 1. Malformed input: private reply, no TypeSafe call.
-    let (_, d) = interaction("tok-bad-input", "choice", &[("question", "Pick?"), ("options", "a, a")]);
+    let (_, d) = interaction(
+        "tok-bad-input",
+        "choice",
+        &[("question", "Pick?"), ("options", "a, a")],
+    );
     tx.send(d).unwrap();
-    wait_for("private reply to bad input", 10, &bot, || find(&dlog(), "POST", "tok-bad-input", "/callback").is_some())
-        .await;
-    let cb = find(&dlog(), "POST", "tok-bad-input", "/callback").unwrap().body.clone();
+    wait_for("private reply to bad input", 10, &bot, || {
+        find(&dlog(), "POST", "tok-bad-input", "/callback").is_some()
+    })
+    .await;
+    let cb = find(&dlog(), "POST", "tok-bad-input", "/callback")
+        .unwrap()
+        .body
+        .clone();
     assert_eq!(cb["type"], 4, "{cb}");
     assert_eq!(cb["data"]["flags"], 64, "ephemeral: {cb}");
-    assert!(cb["data"]["content"].as_str().unwrap().contains("more than once"), "{cb}");
+    assert!(
+        cb["data"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("more than once"),
+        "{cb}"
+    );
     assert_eq!(jev_calls(), 0);
 
     // 2. TypeSafe 5xx -> deferred, one call, error reply with its message.
@@ -374,57 +434,123 @@ async fn second_instance_survives_failures_and_drains_on_sigterm() {
         502,
         r#"{"detail":{"error_type":"upstream_error","message":"model offline"}}"#,
     ));
-    let (_, d) = interaction("tok-5xx", "choice", &[("question", "Pick?"), ("options", "a, b")]);
+    let (_, d) = interaction(
+        "tok-5xx",
+        "choice",
+        &[("question", "Pick?"), ("options", "a, b")],
+    );
     tx.send(d).unwrap();
-    wait_for("edit after 5xx", 10, &bot, || find(&dlog(), "PATCH", "tok-5xx", "@original").is_some()).await;
-    assert_eq!(find(&dlog(), "POST", "tok-5xx", "/callback").unwrap().body["type"], 5, "deferred first");
+    wait_for("edit after 5xx", 10, &bot, || {
+        find(&dlog(), "PATCH", "tok-5xx", "@original").is_some()
+    })
+    .await;
+    assert_eq!(
+        find(&dlog(), "POST", "tok-5xx", "/callback").unwrap().body["type"],
+        5,
+        "deferred first"
+    );
     let text = find(&dlog(), "PATCH", "tok-5xx", "@original").unwrap().body["content"].to_string();
-    assert!(text.contains("HTTP 502") && text.contains("model offline"), "{text}");
+    assert!(
+        text.contains("HTTP 502") && text.contains("model offline"),
+        "{text}"
+    );
     assert_eq!(jev_calls(), 1);
 
     // 3. TypeSafe timeout (JEV_TIMEOUT_SECS=2) -> error reply.
-    jev_queue.lock().unwrap().push_back(Resp { status: 200, body: "{}".into(), delay: Duration::from_secs(8) });
-    let (_, d) = interaction("tok-timeout", "score", &[("text", "t"), ("question", "How bad?"), ("levels", "low, high")]);
+    jev_queue.lock().unwrap().push_back(Resp {
+        status: 200,
+        body: "{}".into(),
+        delay: Duration::from_secs(8),
+    });
+    let (_, d) = interaction(
+        "tok-timeout",
+        "score",
+        &[
+            ("text", "t"),
+            ("question", "How bad?"),
+            ("levels", "low, high"),
+        ],
+    );
     tx.send(d).unwrap();
-    wait_for("edit after timeout", 10, &bot, || find(&dlog(), "PATCH", "tok-timeout", "@original").is_some())
-        .await;
-    let text = find(&dlog(), "PATCH", "tok-timeout", "@original").unwrap().body["content"].to_string();
+    wait_for("edit after timeout", 10, &bot, || {
+        find(&dlog(), "PATCH", "tok-timeout", "@original").is_some()
+    })
+    .await;
+    let text = find(&dlog(), "PATCH", "tok-timeout", "@original")
+        .unwrap()
+        .body["content"]
+        .to_string();
     assert!(text.contains("did not answer in time"), "{text}");
 
     // 4. Malformed TypeSafe answer -> error reply.
-    jev_queue.lock().unwrap().push_back(Resp::json(200, answer("noul", json!({"type": "noul", "noul": 7}))));
-    let (_, d) = interaction("tok-malformed", "noul", &[("text", "t"), ("question", "Yes?")]);
+    jev_queue.lock().unwrap().push_back(Resp::json(
+        200,
+        answer("noul", json!({"type": "noul", "noul": 7})),
+    ));
+    let (_, d) = interaction(
+        "tok-malformed",
+        "noul",
+        &[("text", "t"), ("question", "Yes?")],
+    );
     tx.send(d).unwrap();
     wait_for("edit after malformed answer", 10, &bot, || {
         find(&dlog(), "PATCH", "tok-malformed", "@original").is_some()
     })
     .await;
-    let text = find(&dlog(), "PATCH", "tok-malformed", "@original").unwrap().body["content"].to_string();
+    let text = find(&dlog(), "PATCH", "tok-malformed", "@original")
+        .unwrap()
+        .body["content"]
+        .to_string();
     assert!(text.contains("unexpected answer"), "{text}");
 
     // 5. Discord reply failure: the edit gets HTTP 500 -> logged, dropped.
     fail_edits.lock().unwrap().push("tok-edit-fails".into());
-    jev_queue.lock().unwrap().push_back(Resp::json(200, answer("noul", json!({"type": "noul", "noul": 0.3}))));
-    let (id, d) = interaction("tok-edit-fails", "noul", &[("text", "t"), ("question", "Yes?")]);
+    jev_queue.lock().unwrap().push_back(Resp::json(
+        200,
+        answer("noul", json!({"type": "noul", "noul": 0.3})),
+    ));
+    let (id, d) = interaction(
+        "tok-edit-fails",
+        "noul",
+        &[("text", "t"), ("question", "Yes?")],
+    );
     tx.send(d).unwrap();
     wait_for("discord reply failure logged", 10, &bot, || {
-        bot.log().iter().any(|l| l.starts_with(&format!("discord reply failed: interaction={id}")))
+        bot.log()
+            .iter()
+            .any(|l| l.starts_with(&format!("discord reply failed: interaction={id}")))
     })
     .await;
 
     // 6. Still alive, and a valid command still works end to end.
-    assert!(bot.alive(), "bot exited after failures:\n{}", bot.log().join("\n"));
+    assert!(
+        bot.alive(),
+        "bot exited after failures:\n{}",
+        bot.log().join("\n")
+    );
     jev_queue.lock().unwrap().push_back(Resp::json(
         200,
         answer("pick", json!({"type": "choice", "choice": "b", "probabilities": {"a": 0.3, "b": 0.7}, "confidence": 0.4})),
     ));
-    let (id, d) = interaction("tok-ok", "choice", &[("question", "Pick?"), ("options", "a, b")]);
+    let (id, d) = interaction(
+        "tok-ok",
+        "choice",
+        &[("question", "Pick?"), ("options", "a, b")],
+    );
     tx.send(d).unwrap();
-    wait_for("valid reply", 10, &bot, || find(&dlog(), "PATCH", "tok-ok", "@original").is_some()).await;
+    wait_for("valid reply", 10, &bot, || {
+        find(&dlog(), "PATCH", "tok-ok", "@original").is_some()
+    })
+    .await;
     let text = find(&dlog(), "PATCH", "tok-ok", "@original").unwrap().body["content"].to_string();
-    assert!(text.contains("**Jev picks:** b") && text.contains("70.0%") && text.contains("40.0%"), "{text}");
+    assert!(
+        text.contains("**Jev picks:** b") && text.contains("70.0%") && text.contains("40.0%"),
+        "{text}"
+    );
     wait_for("timing line", 5, &bot, || {
-        bot.log().iter().any(|l| l.starts_with(&format!("choice timing: interaction={id} ")))
+        bot.log()
+            .iter()
+            .any(|l| l.starts_with(&format!("choice timing: interaction={id} ")))
     })
     .await;
 
@@ -438,27 +564,55 @@ async fn second_instance_survives_failures_and_drains_on_sigterm() {
     });
     let (_, d) = interaction("tok-drain", "noul", &[("text", "t"), ("question", "Yes?")]);
     tx.send(d).unwrap();
-    wait_for("in-flight TypeSafe call", 10, &bot, || jev_calls() > calls_before).await;
+    wait_for("in-flight TypeSafe call", 10, &bot, || {
+        jev_calls() > calls_before
+    })
+    .await;
     let signalled = Instant::now();
     let pid = bot.child.id().to_string();
-    assert!(Command::new("kill").args(["-TERM", &pid]).status().unwrap().success());
+    assert!(Command::new("kill")
+        .args(["-TERM", &pid])
+        .status()
+        .unwrap()
+        .success());
     let status = loop {
         if let Some(s) = bot.child.try_wait().unwrap() {
             break s;
         }
-        assert!(signalled.elapsed() < Duration::from_secs(20), "no exit after SIGTERM");
+        assert!(
+            signalled.elapsed() < Duration::from_secs(20),
+            "no exit after SIGTERM"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
     // The stderr reader thread may lag the exit slightly.
-    wait_for("shutdown log", 5, &bot, || bot.log().iter().any(|l| l.starts_with("shutdown: clean"))).await;
+    wait_for("shutdown log", 5, &bot, || {
+        bot.log().iter().any(|l| l.starts_with("shutdown: clean"))
+    })
+    .await;
     let log = bot.log();
     assert_eq!(status.code(), Some(0), "exit status\n{}", log.join("\n"));
-    assert!(log.iter().any(|l| l == "shutdown: SIGTERM received"), "{}", log.join("\n"));
-    let edit = find(&dlog(), "PATCH", "tok-drain", "@original").cloned().expect("drained reply delivered");
+    assert!(
+        log.iter().any(|l| l == "shutdown: SIGTERM received"),
+        "{}",
+        log.join("\n")
+    );
+    let edit = find(&dlog(), "PATCH", "tok-drain", "@original")
+        .cloned()
+        .expect("drained reply delivered");
     assert!(edit.at > signalled, "reply edit happened after SIGTERM");
-    assert!(edit.body["content"].to_string().contains("**P(yes):** 0.81"), "{}", edit.body);
+    assert!(
+        edit.body["content"]
+            .to_string()
+            .contains("**P(yes):** 0.81"),
+        "{}",
+        edit.body
+    );
 
     // Secrets never reach the log.
     let all = log.join("\n");
-    assert!(!all.contains(TOKEN) && !all.contains(API_KEY), "secret in log:\n{all}");
+    assert!(
+        !all.contains(TOKEN) && !all.contains(API_KEY),
+        "secret in log:\n{all}"
+    );
 }
