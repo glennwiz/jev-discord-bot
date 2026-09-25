@@ -1,8 +1,8 @@
 # jev-discord-bot
 
 Discord bot that asks [Jev](https://jevmodel.org) (TypeSafe's System One
-decision model, via jevmodel.org) typed questions. Slices JEV-01 `/jev choice`
-and JEV-02 `/jev score`.
+decision model, via jevmodel.org) typed questions. Slices JEV-01 `/jev choice`,
+JEV-02 `/jev score` and JEV-03 `/jev noul`.
 
 ```
 /jev choice question:<what to decide> options:<a, b, c> [context:<background>]
@@ -38,6 +38,18 @@ Jev confidence: 88.0%
 Levels must be 2-10, non-blank, distinct (case-insensitive), each at most
 100 characters.
 
+```
+/jev noul text:<what to judge> question:<yes/no question> [yes_means:<..>] [no_means:<..>]
+```
+
+One `noul` question; the reply is P(yes) exactly as Jev sent it, and nothing
+else - no Yes/No verdict and no confidence, because Jev returns neither and
+the action threshold is the reader's call:
+
+```
+**P(yes):** 0.12 (on 0-1)
+```
+
 ## Layout
 
 | Path | Role |
@@ -47,6 +59,8 @@ Levels must be 2-10, non-blank, distinct (case-insensitive), each at most
 | `src/choice/render.rs` | Discord reply text |
 | `src/main.rs` | Gateway glue: guild command registration, defer, edit |
 | `src/score/input.rs`, `jev.rs`, `render.rs` | The same three roles for `/jev score`; shares no code with `choice/` |
+| `src/noul/input.rs`, `jev.rs`, `render.rs` | The same three roles for `/jev noul`; shares no code with `choice/` or `score/` |
+| `tests/noul_fake_jev.rs` | Offline noul tests (fake server from `tests/common/`) |
 | `tests/score_fake_jev.rs`, `tests/common/` | Offline score tests and their fake Jev server |
 | `src/config.rs` | Environment configuration (secrets redacted in `Debug`) |
 | `tests/choice_fake_jev.rs` | Offline tests against a fake Jev HTTP server on 127.0.0.1 |
@@ -77,6 +91,12 @@ it at `score / (n-1)`, so the bot treats the scale as 0-based (`0..=n-1`) and
 rejects anything outside it. The docs' illustrative use-case cards disagree
 (2.8 on a 3-level rubric). The first live score call settles it.
 
+Noul (`src/noul/jev.rs`): request `{"type":"noul","instructions":..}` with
+optional `"criteria":{"true":"<yes means>","false":"<no means>"}` (the key
+names the playground sends; a side left blank gets its default "Yes"/"No");
+200 answer `{"type":"noul","noul":0.12}`, P(yes) in `[0, 1]`. Docs: "There is
+no separate confidence field; the probability is the certainty measure."
+
 Not verifiable without a key: whether option keys with spaces/punctuation are
 accepted (docs put no rule on criteria keys) and the real answer values. The
 live test settles both.
@@ -106,7 +126,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 cd ~/dev/jev-discord-bot
 export PATH=$HOME/.cargo/bin:$PATH CARGO_BUILD_JOBS=2
 cargo fetch                       # the only step that needs the internet
-cargo test --offline              # 12 choice + 10 score tests, no Discord / internet / keys
+cargo test --offline              # 12 choice + 10 score + 9 noul tests, no Discord / internet / keys
 # proof of "offline": no network namespace except loopback
 unshare -rn sh -c 'ip link set lo up; cargo test --offline'
 cargo build --release --offline
@@ -121,7 +141,8 @@ cargo build --release --offline
    `DISCORD_TOKEN`, `DISCORD_GUILD_ID` and `JEVMODEL_API_KEY`.
 3. `./target/release/jev-discord-bot` - logs `registered 1 guild command(s)`.
 4. In the test guild: `/jev choice question:Where should the team eat? options:pizza, sushi, tacos`
-   and `/jev score text:Billed twice, wants a refund today. question:How urgent is this? levels:routine, soon, urgent, critical`.
+   and `/jev score text:Billed twice, wants a refund today. question:How urgent is this? levels:routine, soon, urgent, critical`
+   and `/jev noul text:Billed twice, wants a refund today. question:Does this need a human right now?`.
 
 Logs carry the interaction id, option count, picked index, probability,
 confidence, input tokens and latency - never tokens, keys or the user's text.
