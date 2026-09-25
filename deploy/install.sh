@@ -149,8 +149,7 @@ adhoc_bots() {
         exe=${exe% (deleted)}
         case "$exe" in
             "$OPT"/* | /opt/jev-discord-bot/*) ;;
-            */jev-discord-bot | */jev-discord-bot-*) printf '%s %s
-' "${p##*/}" "$exe" ;;
+            */jev-discord-bot | */jev-discord-bot-*) printf '%s %s\n' "${p##*/}" "$exe" ;;
         esac
     done
 }
