@@ -487,7 +487,12 @@ async fn provider_error_shapes_are_all_read_and_bounded() {
             Some("authentication_error"),
             Some("bad key".into()),
         ),
-        (404, json!({"detail": "Not Found"}), None, Some("Not Found".into())),
+        (
+            404,
+            json!({"detail": "Not Found"}),
+            None,
+            Some("Not Found".into()),
+        ),
         (
             422,
             json!({"detail": [{"loc": ["body", "state"], "msg": "field required", "type": "missing"}]}),
@@ -503,7 +508,10 @@ async fn provider_error_shapes_are_all_read_and_bounded() {
     ];
     for (status, body, kind, message) in cases {
         let (base, _) = fake_jev(Reply::Json(status, body.to_string())).await;
-        let err = client(&base, 2_000).choose(&lunch(), None).await.unwrap_err();
+        let err = client(&base, 2_000)
+            .choose(&lunch(), None)
+            .await
+            .unwrap_err();
         let want = JevError::Status {
             status,
             kind: kind.map(String::from),

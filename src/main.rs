@@ -422,13 +422,13 @@ async fn main() {
             eprintln!("jev client error: {e}");
             std::process::exit(2);
         });
-    let score = ScoreClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout)
-        .unwrap_or_else(|e| {
+    let score =
+        ScoreClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout).unwrap_or_else(|e| {
             eprintln!("jev client error: {e}");
             std::process::exit(2);
         });
-    let noul = NoulClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout)
-        .unwrap_or_else(|e| {
+    let noul =
+        NoulClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout).unwrap_or_else(|e| {
             eprintln!("jev client error: {e}");
             std::process::exit(2);
         });
