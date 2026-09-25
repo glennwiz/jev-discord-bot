@@ -12,7 +12,8 @@
 //!          `0..=n-1` and may be fractional. Source: the playground labels a
 //!          result "score {s} on 0-{max}" and places it at `score / (n-1)`.
 //!          The docs' illustrative use-case cards disagree (2.8 on a 3-level
-//!          rubric) - the live run is the check.
+//!          rubric) - the live run is the check. The base is the single
+//!          constant `input::LOWEST_LEVEL_SCORE`.
 //! error    `{"error":{"type":"..","message":".."}}` with 401/402/422/429/502.
 //!
 //! The transport mirrors `choice::jev` line for line rather than sharing it,
@@ -34,9 +35,9 @@ pub const QUESTION_NAME: &str = "score";
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_IDEMPOTENCY_KEY_CHARS: usize = 100;
 
-/// Jev's answer. `score` is unrounded on the 0-based level scale;
+/// Jev's answer. `score` is unrounded on the level scale;
 /// `confidence` is Jev's separate confidence field; `level_probabilities`
-/// is the optional per-level distribution, sorted by level.
+/// is the optional per-level distribution as (level score, p), sorted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoreOutcome {
     pub score: f64,
@@ -175,10 +176,10 @@ pub fn parse_score(body: &[u8], req: &ScoreRequest) -> Result<ScoreOutcome, Scor
     if answer.kind.as_deref() != Some("score") {
         return Err(ScoreError::Malformed(format!("answer type is {:?}, expected \"score\"", answer.kind)));
     }
-    let max = req.max_score() as f64;
+    let (min, max) = (req.min_score(), req.max_score());
     let score = answer.score.ok_or_else(|| ScoreError::Malformed("no score".into()))?;
-    if !(score.is_finite() && (0.0..=max).contains(&score)) {
-        return Err(ScoreError::Malformed(format!("score {score} is outside 0-{max}")));
+    if !(score.is_finite() && (min as f64..=max as f64).contains(&score)) {
+        return Err(ScoreError::Malformed(format!("score {score} is outside {min}-{max}")));
     }
     let confidence = answer.confidence.ok_or_else(|| ScoreError::Malformed("no confidence".into()))?;
     if !(confidence.is_finite() && (0.0..=1.0).contains(&confidence)) {
@@ -190,7 +191,7 @@ pub fn parse_score(body: &[u8], req: &ScoreRequest) -> Result<ScoreOutcome, Scor
         let level: usize = key
             .parse()
             .ok()
-            .filter(|l| *l <= req.max_score())
+            .filter(|l| (min..=max).contains(l))
             .ok_or_else(|| ScoreError::Malformed(format!("probability for unknown level \"{key}\"")))?;
         if !(p.is_finite() && (0.0..=1.0).contains(p)) {
             return Err(ScoreError::Malformed(format!("level {level} probability {p} is outside [0, 1]")));

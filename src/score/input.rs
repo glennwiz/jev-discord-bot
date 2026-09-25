@@ -17,8 +17,14 @@ pub const MAX_STATE_CHARS: usize = 8_000;
 /// Jev: serialized `criteria` is at most 2,000 characters per question.
 pub const MAX_CRITERIA_CHARS: usize = 2_000;
 
+/// The score Jev gives the LOWEST level; level `i` scores this plus `i`.
+/// This is the only place the scale base lives. The jevmodel.org playground
+/// renders "score {s} on 0-{max}", hence 0; if the live call shows 1-based
+/// scores, change this to 1 and nothing else.
+pub const LOWEST_LEVEL_SCORE: usize = 0;
+
 /// A validated score request. `levels` is ordered lowest first; level `i`
-/// is score `i` on Jev's scale.
+/// is score [`ScoreRequest::level_score`]`(i)` on Jev's scale.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoreRequest {
     pub state: String,
@@ -133,8 +139,27 @@ impl ScoreRequest {
         Ok(req)
     }
 
-    /// Highest score on Jev's 0-based scale.
+    /// Score of the lowest level.
+    pub fn min_score(&self) -> usize {
+        LOWEST_LEVEL_SCORE
+    }
+
+    /// Score of the highest level.
     pub fn max_score(&self) -> usize {
-        self.levels.len() - 1
+        self.level_score(self.levels.len() - 1)
+    }
+
+    /// Score of `levels[i]`.
+    pub fn level_score(&self, i: usize) -> usize {
+        LOWEST_LEVEL_SCORE + i
+    }
+
+    /// Index into `levels` of the level at or just below `score`, clamped
+    /// to the scale, and whether `score` sits exactly on that level.
+    pub fn level_at_or_below(&self, score: f64) -> (usize, bool) {
+        let offset = (score - self.min_score() as f64).max(0.0);
+        let top = self.levels.len() - 1;
+        let index = (offset.floor() as usize).min(top);
+        (index, offset.fract() == 0.0 || index == top)
     }
 }

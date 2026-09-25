@@ -9,11 +9,21 @@ mod common;
 use std::time::Duration;
 
 use common::{fake_jev, Reply};
+use score::input::LOWEST_LEVEL_SCORE;
 use score::{render, InputError, ScoreClient, ScoreError, ScoreRequest};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
 const FAKE_KEY: &str = "sk-test-not-a-real-key";
+
+// Every expected score below is relative to the scale base, so flipping
+// LOWEST_LEVEL_SCORE is a one-line change that keeps this suite meaningful.
+const LO: usize = LOWEST_LEVEL_SCORE;
+
+/// A score `offset` levels above the lowest one.
+fn at(offset: f64) -> f64 {
+    LO as f64 + offset
+}
 
 fn urgency() -> ScoreRequest {
     ScoreRequest::parse(
@@ -37,12 +47,12 @@ fn ok_body(answer: Value) -> String {
 
 #[tokio::test]
 async fn valid_score_sends_contract_request_once_and_keeps_fraction() {
-    let body = ok_body(json!({"type": "score", "score": 1.4, "confidence": 0.88}));
+    let body = ok_body(json!({"type": "score", "score": at(1.4), "confidence": 0.88}));
     let (base, seen) = fake_jev(Reply::Json(200, body)).await;
     let req = urgency();
     let out = client(&base, 2_000).score(&req, Some("discord-456")).await.unwrap();
 
-    assert_eq!(out.score, 1.4);
+    assert_eq!(out.score, at(1.4));
     assert_eq!(out.confidence, 0.88);
     assert!(out.level_probabilities.is_empty());
     assert_eq!(out.input_tokens, Some(61));
@@ -67,23 +77,26 @@ async fn valid_score_sends_contract_request_once_and_keeps_fraction() {
     );
 
     let text = render::outcome(&req, &out);
-    assert!(text.contains("**Jev score:** 1.4 on 0-3 (between soon and urgent)"), "{text}");
-    assert!(text.contains("`0` routine · `1` soon · `2` urgent · `3` critical"), "{text}");
+    let head = format!("**Jev score:** {} on {LO}-{} (between soon and urgent)", at(1.4), LO + 3);
+    assert!(text.contains(&head), "{text}");
+    let legend = format!("`{LO}` routine · `{}` soon · `{}` urgent · `{}` critical", LO + 1, LO + 2, LO + 3);
+    assert!(text.contains(&legend), "{text}");
     assert!(text.contains("Jev confidence: 88.0%"), "{text}");
 }
 
 #[tokio::test]
 async fn level_probabilities_are_accepted_sorted_and_shown() {
-    let body = ok_body(json!({"type": "score", "score": 2.0, "confidence": 0.7,
-        "probabilities": {"3": 0.1, "0": 0.05, "2": 0.6, "1": 0.25},
-        "legend": {"0": "routine", "1": "soon", "2": "urgent", "3": "critical"}}));
+    let k = |i: usize| (LO + i).to_string();
+    let body = ok_body(json!({"type": "score", "score": at(2.0), "confidence": 0.7,
+        "probabilities": {k(3): 0.1, k(0): 0.05, k(2): 0.6, k(1): 0.25},
+        "legend": {k(0): "routine", k(1): "soon", k(2): "urgent", k(3): "critical"}}));
     let (base, _) = fake_jev(Reply::Json(200, body)).await;
     let req = urgency();
     let out = client(&base, 2_000).score(&req, None).await.unwrap();
-    assert_eq!(out.level_probabilities, vec![(0, 0.05), (1, 0.25), (2, 0.6), (3, 0.1)]);
+    assert_eq!(out.level_probabilities, vec![(LO, 0.05), (LO + 1, 0.25), (LO + 2, 0.6), (LO + 3, 0.1)]);
     let text = render::outcome(&req, &out);
-    assert!(text.contains("**Jev score:** 2 on 0-3 (at urgent)"), "{text}");
-    assert!(text.contains("`2` urgent (60.0%)"), "{text}");
+    assert!(text.contains(&format!("**Jev score:** {} on {LO}-{} (at urgent)", at(2.0), LO + 3)), "{text}");
+    assert!(text.contains(&format!("`{}` urgent (60.0%)", LO + 2)), "{text}");
 }
 
 #[test]
@@ -91,10 +104,21 @@ fn fractional_scores_are_never_rounded_to_a_level() {
     for (v, shown) in [(1.4, "1.4"), (1.9996, "1.9996"), (0.05, "0.05"), (3.0, "3"), (2.25, "2.25")] {
         assert_eq!(render::number(v), shown);
     }
+}
+
+#[test]
+fn position_is_pinned_at_both_ends_of_the_scale() {
     let req = urgency();
-    assert_eq!(render::position(&req, 0.0), "at routine");
-    assert_eq!(render::position(&req, 2.999), "between urgent and critical");
-    assert_eq!(render::position(&req, 3.0), "at critical");
+    assert_eq!((req.min_score(), req.max_score()), (LO, LO + 3));
+    // Bottom end.
+    assert_eq!(render::position(&req, at(0.0)), "at routine");
+    assert_eq!(render::position(&req, at(0.001)), "between routine and soon");
+    // Middle.
+    assert_eq!(render::position(&req, at(1.0)), "at soon");
+    assert_eq!(render::position(&req, at(1.4)), "between soon and urgent");
+    // Top end.
+    assert_eq!(render::position(&req, at(2.999)), "between urgent and critical");
+    assert_eq!(render::position(&req, at(3.0)), "at critical");
 }
 
 // ---- invalid / duplicate / too-few levels: refused before any call -------
@@ -171,6 +195,10 @@ async fn non_2xx_surfaces_status_and_error_envelope_without_retry() {
 async fn malformed_typed_responses_are_rejected() {
     // (case, body, substring the rejection reason must contain) - the reason
     // pins WHICH check fired.
+    let above_top = format!("score {} is outside {LO}-{}", at(3.2), LO + 3);
+    let below_bottom = format!("score {} is outside {LO}-{}", at(-0.1), LO + 3);
+    let unknown_above = format!("unknown level \"{}\"", LO + 4);
+    let prob_range = format!("level {} probability 1.5 is outside", LO + 1);
     let cases: Vec<(&str, String, &str)> = vec![
         ("not json", "nope".into(), "not a Jev response"),
         ("no answers", json!({"model": "jev-latest"}).to_string(), "not a Jev response"),
@@ -179,16 +207,18 @@ async fn malformed_typed_responses_are_rejected() {
         ("wrong type", ok_body(json!({"type": "choice", "choice": "soon", "confidence": 0.5})), "expected \"score\""),
         ("missing score", ok_body(json!({"type": "score", "confidence": 0.5})), "no score"),
         ("score as string", ok_body(json!({"type": "score", "score": "1.4", "confidence": 0.5})), "not a Jev response"),
-        ("score above top level", ok_body(json!({"type": "score", "score": 3.2, "confidence": 0.5})), "score 3.2 is outside 0-3"),
-        ("negative score", ok_body(json!({"type": "score", "score": -0.1, "confidence": 0.5})), "score -0.1 is outside"),
+        ("score above top level", ok_body(json!({"type": "score", "score": at(3.2), "confidence": 0.5})),
+            &above_top),
+        ("score below bottom level", ok_body(json!({"type": "score", "score": at(-0.1), "confidence": 0.5})),
+            &below_bottom),
         ("missing confidence", ok_body(json!({"type": "score", "score": 1.0})), "no confidence"),
         ("confidence above 1", ok_body(json!({"type": "score", "score": 1.0, "confidence": 1.2})), "confidence 1.2 is outside"),
-        ("probability for unknown level", ok_body(json!({"type": "score", "score": 1.0, "confidence": 0.5,
-            "probabilities": {"4": 0.3}})), "unknown level \"4\""),
+        ("probability for level above top", ok_body(json!({"type": "score", "score": at(1.0), "confidence": 0.5,
+            "probabilities": {(LO + 4).to_string(): 0.3}})), &unknown_above),
         ("probability key not a level", ok_body(json!({"type": "score", "score": 1.0, "confidence": 0.5,
             "probabilities": {"soon": 0.3}})), "unknown level \"soon\""),
         ("probability out of range", ok_body(json!({"type": "score", "score": 1.0, "confidence": 0.5,
-            "probabilities": {"1": 1.5}})), "level 1 probability 1.5 is outside"),
+            "probabilities": {(LO + 1).to_string(): 1.5}})), &prob_range),
     ];
     for (name, body, reason) in cases {
         let (base, _) = fake_jev(Reply::Json(200, body)).await;

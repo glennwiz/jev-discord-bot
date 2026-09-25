@@ -14,15 +14,19 @@ pub fn outcome(req: &ScoreRequest, out: &ScoreOutcome) -> String {
         .levels
         .iter()
         .enumerate()
-        .map(|(i, l)| match out.level_probabilities.iter().find(|(lv, _)| *lv == i) {
-            Some((_, p)) => format!("`{i}` {l} ({})", percent(*p)),
-            None => format!("`{i}` {l}"),
+        .map(|(i, l)| {
+            let n = req.level_score(i);
+            match out.level_probabilities.iter().find(|(lv, _)| *lv == n) {
+                Some((_, p)) => format!("`{n}` {l} ({})", percent(*p)),
+                None => format!("`{n}` {l}"),
+            }
         })
         .collect();
     let text = format!(
-        "**Question:** {}\n**Jev score:** {} on 0-{} ({})\n**Levels:** {}\nJev confidence: {}",
+        "**Question:** {}\n**Jev score:** {} on {}-{} ({})\n**Levels:** {}\nJev confidence: {}",
         clip(&req.question, MAX_QUESTION_ECHO_CHARS),
         number(out.score),
+        req.min_score(),
         req.max_score(),
         position(req, out.score),
         legend.join(" · "),
@@ -33,11 +37,9 @@ pub fn outcome(req: &ScoreRequest, out: &ScoreOutcome) -> String {
 
 /// "at soon" on a whole level, else "between soon and urgent".
 pub fn position(req: &ScoreRequest, score: f64) -> String {
-    let lower = score.floor() as usize;
-    if score.fract() == 0.0 || lower >= req.max_score() {
-        format!("at {}", req.levels[lower.min(req.max_score())])
-    } else {
-        format!("between {} and {}", req.levels[lower], req.levels[lower + 1])
+    match req.level_at_or_below(score) {
+        (i, true) => format!("at {}", req.levels[i]),
+        (i, false) => format!("between {} and {}", req.levels[i], req.levels[i + 1]),
     }
 }
 
