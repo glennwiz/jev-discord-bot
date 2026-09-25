@@ -204,11 +204,7 @@ fn arg<'a>(args: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
 /// to keep the `Ok` path small; `?` boxes it automatically.
 type ReplyResult = Result<(), Box<serenity::Error>>;
 
-async fn reply_private(
-    ctx: &Context,
-    cmd: &CommandInteraction,
-    text: String,
-) -> ReplyResult {
+async fn reply_private(ctx: &Context, cmd: &CommandInteraction, text: String) -> ReplyResult {
     let msg = CreateInteractionResponseMessage::new()
         .content(text)
         .ephemeral(true);
