@@ -1,9 +1,10 @@
-//! Discord Gateway bot: registers `/jev choice` and `/jev score` in one test
-//! guild and answers them through Jev. Feature logic lives in `choice/` and
-//! `score/`; this file is only glue.
+//! Discord Gateway bot: registers `/jev choice`, `/jev score` and `/jev noul`
+//! in one test guild and answers them through Jev. Feature logic lives in
+//! `choice/`, `score/` and `noul/`; this file is only glue.
 
 mod choice;
 mod config;
+mod noul;
 mod score;
 
 use serenity::all::{
@@ -16,12 +17,14 @@ use serenity::Client;
 
 use choice::{render, ChoiceRequest, JevClient};
 use config::Config;
+use noul::{NoulClient, NoulRequest};
 use score::{ScoreClient, ScoreRequest};
 
 struct Handler {
     guild: GuildId,
     jev: JevClient,
     score: ScoreClient,
+    noul: NoulClient,
 }
 
 fn jev_command() -> CreateCommand {
@@ -65,10 +68,32 @@ fn jev_command() -> CreateCommand {
             .required(true)
             .max_length(score::input::MAX_CRITERIA_CHARS as u16),
         );
+    let noul = CreateCommandOption::new(CommandOptionType::SubCommand, "noul", "Ask Jev for P(yes) on a yes/no question")
+        .add_sub_option(
+            CreateCommandOption::new(CommandOptionType::String, "text", "The text Jev should judge")
+                .required(true)
+                .max_length(4_000),
+        )
+        .add_sub_option(
+            CreateCommandOption::new(CommandOptionType::String, "question", "The yes/no question")
+                .required(true)
+                .max_length(noul::input::MAX_QUESTION_CHARS as u16),
+        )
+        .add_sub_option(
+            CreateCommandOption::new(CommandOptionType::String, "yes_means", "Optional: what counts as yes")
+                .required(false)
+                .max_length(noul::input::MAX_MEANING_CHARS as u16),
+        )
+        .add_sub_option(
+            CreateCommandOption::new(CommandOptionType::String, "no_means", "Optional: what counts as no")
+                .required(false)
+                .max_length(noul::input::MAX_MEANING_CHARS as u16),
+        );
     CreateCommand::new("jev")
         .description("Ask Jev for a typed decision")
         .add_option(choice)
         .add_option(score)
+        .add_option(noul)
 }
 
 /// The invoked `/jev` subcommand's name and its string options.
@@ -160,6 +185,39 @@ impl Handler {
         cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply)).await?;
         Ok(())
     }
+
+    async fn handle_noul(&self, ctx: &Context, cmd: &CommandInteraction, args: &[(&str, &str)]) -> serenity::Result<()> {
+        let (Some(text), Some(question)) = (arg(args, "text"), arg(args, "question")) else {
+            return Ok(());
+        };
+        // Bad input never reaches Jev: answer privately and stop.
+        let req = match NoulRequest::parse(text, question, arg(args, "yes_means"), arg(args, "no_means")) {
+            Ok(r) => r,
+            Err(e) => return reply_private(ctx, cmd, noul::render::input_error(&e)).await,
+        };
+        // Acknowledge inside Discord's 3 s window before the network call.
+        cmd.defer(&ctx.http).await?;
+        let started = std::time::Instant::now();
+        let reply = match self.noul.ask(&req, Some(&format!("discord-{}", cmd.id))).await {
+            Ok(out) => {
+                eprintln!(
+                    "noul ok: interaction={} criteria={} p_yes={} input_tokens={:?} ms={}",
+                    cmd.id,
+                    req.criteria().is_some(),
+                    out.p_yes,
+                    out.input_tokens,
+                    started.elapsed().as_millis()
+                );
+                noul::render::outcome(&req, &out)
+            }
+            Err(e) => {
+                eprintln!("noul failed: interaction={} error={} ms={}", cmd.id, e, started.elapsed().as_millis());
+                noul::render::jev_error(&e)
+            }
+        };
+        cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply)).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -185,6 +243,7 @@ impl EventHandler for Handler {
         let result = match sub {
             "choice" => self.handle_choice(&ctx, &cmd, &args).await,
             "score" => self.handle_score(&ctx, &cmd, &args).await,
+            "noul" => self.handle_noul(&ctx, &cmd, &args).await,
             _ => Ok(()),
         };
         if let Err(e) = result {
@@ -211,7 +270,11 @@ async fn main() {
         eprintln!("jev client error: {e}");
         std::process::exit(2);
     });
-    let handler = Handler { guild: GuildId::new(cfg.guild_id), jev, score };
+    let noul = NoulClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout).unwrap_or_else(|e| {
+        eprintln!("jev client error: {e}");
+        std::process::exit(2);
+    });
+    let handler = Handler { guild: GuildId::new(cfg.guild_id), jev, score, noul };
     // Slash commands arrive without privileged or message intents.
     let mut client = Client::builder(&cfg.discord_token, GatewayIntents::empty())
         .event_handler(handler)
