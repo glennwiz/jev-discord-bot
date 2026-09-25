@@ -9,6 +9,9 @@ Description=Jev Discord bot (/jev choice, score, noul)
 Documentation=file:///opt/jev-discord-bot/README.md
 Wants=network-online.target
 After=network-online.target
+# At most 5 starts in 5 minutes, then stay failed (these are [Unit] keys).
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -24,8 +27,6 @@ Restart=on-failure
 RestartSec=5
 # Config errors exit 2: restarting cannot fix them, so don't loop on them.
 RestartPreventExitStatus=2
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Graceful stop: SIGTERM closes the gateway and drains in-flight replies for
 # up to 15 s (DRAIN_TIMEOUT in src/main.rs); keep this above that.

@@ -54,16 +54,16 @@ the action threshold is the reader's call:
 
 | Path | Role |
 |---|---|
+| `src/main.rs` | Gateway glue: guild command registration, defer, edit, graceful shutdown |
+| `src/config.rs` | Environment configuration (secrets redacted in `Debug`) |
 | `src/choice/input.rs` | Parse and bound the command input |
 | `src/choice/jev.rs` | The single bounded HTTP call and typed-answer validation |
 | `src/choice/render.rs` | Discord reply text |
-| `src/main.rs` | Gateway glue: guild command registration, defer, edit |
 | `src/score/input.rs`, `jev.rs`, `render.rs` | The same three roles for `/jev score`; shares no code with `choice/` |
 | `src/noul/input.rs`, `jev.rs`, `render.rs` | The same three roles for `/jev noul`; shares no code with `choice/` or `score/` |
-| `tests/noul_fake_jev.rs` | Offline noul tests (fake server from `tests/common/`) |
-| `tests/score_fake_jev.rs`, `tests/common/` | Offline score tests and their fake Jev server |
-| `src/config.rs` | Environment configuration (secrets redacted in `Debug`) |
-| `tests/choice_fake_jev.rs` | Offline tests against a fake Jev HTTP server on 127.0.0.1 |
+| `tests/{choice,score,noul}_fake_jev.rs` | Offline tests against a fake Jev HTTP server on 127.0.0.1 (`tests/common/`) |
+| `tests/live_probe.rs` | Ignored by default: one paid TypeSafe call per feature |
+| `deploy/jev-discord-bot.service` | Hardened systemd unit |
 
 ## Jev wire contract: TypeSafe System One API (verified 2026-09-26)
 
@@ -111,14 +111,70 @@ All three were HTTP 200, model `jev-1.13.0`, 335 / 323 / 285 input tokens.
 Re-run (3 paid calls) in tmux `jev:live`:
 `cargo test --offline --test live_probe -- --ignored --nocapture --test-threads=1`.
 
-## Build and test (ArchBlackMage test box)
+## Setup
 
-Host: Arch Linux, kernel 7.1.9-arch1-2 x86_64. Rust installed user-local with
-`rustup` 1.29.1 (`--profile minimal`, no sudo): rustc 1.98.1, cargo 1.98.1.
-The box's free RAM is small because llama-server holds most of it, so builds
-use two jobs. Every build/test/live run on the box goes inside tmux session
-`jev`, one window per purpose (`build`, `test`, `live`, `review`), with output
-tee'd to `~/jev-logs/<window>.log`; the session is never killed:
+1. **Discord application.** In the Discord developer portal create a new
+   application with a bot user, dedicated to Jev (never reuse the
+   WhiteMage/DarkMage tokens). Copy its token. No privileged intents are
+   needed: slash commands arrive without them.
+2. **Invite** the bot to your guild with the `bot` and
+   `applications.commands` scopes (no extra permissions). Copy the guild id
+   (Developer Mode -> right-click the server -> Copy Server ID).
+3. **TypeSafe key** from <https://console.typesafe.ai/keys> (`apikey_...`).
+
+The bot registers `/jev` in that one guild when it connects (guild commands
+appear immediately; there is no global registration).
+
+## Configuration
+
+All configuration is environment variables. For a local run they may sit in
+a `.env` file in the working directory (`cp .env.example .env && chmod 600 .env`);
+under systemd they live in `/etc/jev-discord-bot/env`.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `DISCORD_TOKEN` | yes | Bot token |
+| `DISCORD_GUILD_ID` | yes | Numeric guild id where `/jev` is registered |
+| `TYPESAFE_API_KEY` | yes | TypeSafe API key |
+| `JEV_BASE_URL` | no | Default `https://api.typesafe.ai` |
+| `JEV_TIMEOUT_SECS` | no | Whole-call timeout per Jev request, 1-60, default 20 |
+
+A missing or invalid value exits with status 2 and a `config error: ...`
+line naming the variable (never its value). Secrets are never logged: the
+startup `config:` line prints them as `<redacted>`.
+
+## Local run and tests
+
+```sh
+cargo fetch                       # the only step that needs the internet
+cargo test --offline              # 35 tests: 13 choice, 10 score, 12 noul; no Discord, network or keys
+cargo fmt --check
+cargo clippy --offline --all-targets -- -D warnings
+cargo build --release --offline
+./target/release/jev-discord-bot  # reads .env; logs "registered 1 guild command(s)"
+```
+
+`cargo test` needs no network: it also passes inside
+`unshare -rn sh -c 'ip link set lo up; cargo test --offline'`. The live probe
+(`tests/live_probe.rs`, 3 paid calls) only runs with `-- --ignored`.
+
+One example per command, as typed in Discord:
+
+```
+/jev choice question:Where should the team eat? options:pizza, sushi, tacos context:Two of us are vegetarian.
+/jev score text:Billed twice, wants a refund today. question:How urgent is this? levels:routine, soon, urgent, critical
+/jev noul text:Billed twice, wants a refund today. question:Does this need a human right now?
+```
+
+### ArchBlackMage test box
+
+Arch Linux x86_64, kernel 7.1.9-arch1-2; Rust user-local via `rustup` 1.29.1
+(`--profile minimal` plus `rustfmt`, `clippy`, target `aarch64-unknown-linux-gnu`;
+no sudo): rustc/cargo 1.98.1. llama-server holds most of the RAM, so builds
+use `CARGO_BUILD_JOBS=2` and scratch goes on disk (`/tmp` is RAM-backed).
+Every build/test/live run goes in tmux session `jev`, one window per purpose
+(`build`, `test`, `live`, `review`), output tee'd to `~/jev-logs/<window>.log`;
+the session is never killed:
 
 ```sh
 mkdir -p ~/jev-logs
@@ -127,37 +183,103 @@ tmux new-window -t jev -n test 2>/dev/null   # once per window name
 tmux send-keys -t jev:test 'cd ~/dev/jev-discord-bot && cargo test --offline 2>&1 | tee ~/jev-logs/test.log' Enter
 ```
 
-The commands to run there:
+## Build for the Raspberry Pi (ARM64)
+
+Either path gives a binary for `aarch64-unknown-linux-gnu`.
+
+- **Native, on the Pi** (simplest; 64-bit Raspberry Pi OS): install rustup
+  there, then `cargo build --release --locked`. Use `CARGO_BUILD_JOBS=2` on
+  small boards.
+- **Cross, from an x86_64 Linux box, no sudo** (verified on ArchBlackMage
+  2026-09-26: produced an `ELF 64-bit LSB pie executable, ARM aarch64`):
+
+  ```sh
+  rustup target add aarch64-unknown-linux-gnu
+  mkdir -p ~/opt && curl -sSfL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | tar -xJ -C ~/opt
+  mv ~/opt/zig-linux-x86_64-0.13.0 ~/opt/zig && export PATH=$HOME/opt/zig:$PATH
+  cargo install --locked cargo-zigbuild
+  cargo zigbuild --release --locked --target aarch64-unknown-linux-gnu.2.36
+  # -> target/aarch64-unknown-linux-gnu/release/jev-discord-bot
+  ```
+
+  Plain `cargo build --target aarch64-...` fails without an
+  `aarch64-linux-gnu-gcc`, because `ring` (TLS) compiles C; zig supplies
+  that. The `.2.36` suffix pins glibc 2.36 (Debian 12 / Raspberry Pi OS
+  bookworm) so the binary does not need a newer glibc than the Pi has.
+
+**Left for JEV-05 (on the device):** run the binary on the Pi itself
+(glibc/loader match, TLS to Discord and TypeSafe, memory under
+`MemoryMax=128M`), and the systemd install below on real hardware.
+
+## Deploy (systemd)
+
+The unit `deploy/jev-discord-bot.service` runs the bot as the dedicated,
+login-less user `jevbot`, reads secrets only from a root-owned env file, and
+applies systemd sandboxing (read-only system, no home access, no new
+privileges, IPv4/IPv6/Unix sockets only, `MemoryMax=128M`).
 
 ```sh
-# one-time
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
+# once
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin jevbot
+sudo install -d -m 0755 /opt/jev-discord-bot
+sudo install -d -m 0750 -o root -g jevbot /etc/jev-discord-bot
+sudo install -m 0640 -o root -g jevbot /dev/null /etc/jev-discord-bot/env
+sudoedit /etc/jev-discord-bot/env       # the variables from "Configuration"
+sudo install -m 0644 deploy/jev-discord-bot.service /etc/systemd/system/
+sudo install -m 0644 README.md /opt/jev-discord-bot/
 
-cd ~/dev/jev-discord-bot
-export PATH=$HOME/.cargo/bin:$PATH CARGO_BUILD_JOBS=2
-cargo fetch                       # the only step that needs the internet
-cargo test --offline              # 12 choice + 10 score + 9 noul tests, no Discord / internet / keys
-# proof of "offline": no network namespace except loopback
-unshare -rn sh -c 'ip link set lo up; cargo test --offline'
-cargo build --release --offline
+# install a release (versioned file + symlink, so rollback is a relink)
+V=$(git rev-parse --short HEAD)
+sudo install -m 0755 target/release/jev-discord-bot /opt/jev-discord-bot/jev-discord-bot-$V
+sudo ln -sfn jev-discord-bot-$V /opt/jev-discord-bot/jev-discord-bot
+sudo systemctl daemon-reload
+sudo systemctl enable --now jev-discord-bot
 ```
 
-## Live run
+**Update:** build the new commit, install it as `jev-discord-bot-<sha>`,
+relink, then `sudo systemctl restart jev-discord-bot`. The restart sends
+SIGTERM: the bot closes the gateway, lets replies already in progress
+finish for up to 15 s, logs `shutdown: clean`, and exits; systemd waits up
+to 30 s (`TimeoutStopSec`).
 
-1. Create a dedicated Discord application/bot for Jev testing (not the
-   WhiteMage/DarkMage bots), invite it to the test guild with the
-   `applications.commands` and `bot` scopes. No privileged intents are needed.
-2. On the box: `cp .env.example .env && chmod 600 .env`, then fill in
-   `DISCORD_TOKEN`, `DISCORD_GUILD_ID` and `TYPESAFE_API_KEY`.
-3. `./target/release/jev-discord-bot` - logs `registered 1 guild command(s)`.
-4. In the test guild: `/jev choice question:Where should the team eat? options:pizza, sushi, tacos`
-   and `/jev score text:Billed twice, wants a refund today. question:How urgent is this? levels:routine, soon, urgent, critical`
-   and `/jev noul text:Billed twice, wants a refund today. question:Does this need a human right now?`.
+**Rollback:** `ls /opt/jev-discord-bot/` to see the kept versions, then
+`sudo ln -sfn jev-discord-bot-<previous-sha> /opt/jev-discord-bot/jev-discord-bot && sudo systemctl restart jev-discord-bot`.
+Keep the last two or three versions; delete older ones by hand.
 
-Logs carry the interaction id, option count, picked index, probability,
-confidence, input tokens and latency - never tokens, keys or the user's text.
+**Rotate a secret:** `sudoedit /etc/jev-discord-bot/env`, then restart.
+
+Restart policy: `on-failure` every 5 s, at most 5 starts in 5 minutes; a
+config error (exit 2) is not restarted, because restarting cannot fix it.
+
+## Logs
+
+The bot writes one line per event to stderr; under systemd that is the
+journal:
+
+```sh
+journalctl -u jev-discord-bot -f              # follow
+journalctl -u jev-discord-bot --since today   # today's
+```
+
+Lines to expect: `config: Config { ..<redacted>.. }`, `connected as <bot> (guild <id>)`,
+`registered 1 guild command(s)`, per command `choice ok|score ok|noul ok: interaction=<id> ...`
+(counts, numbers, input tokens and latency) or `... failed: interaction=<id> error=...`,
+`discord reply failed: ...`, and on stop `shutdown: SIGTERM received` then
+`shutdown: clean`. Logs never contain tokens, keys or the users' text.
+
+## Failure behaviour
+
+- Bad input is answered privately and never reaches TypeSafe.
+- A TypeSafe timeout, non-2xx or malformed answer becomes a user-visible
+  "Jev ... failed: ..." reply; the process keeps running. There are no
+  retries, so one command is at most one TypeSafe call.
+- A Discord reply failure (defer or edit) is logged as `discord reply failed`
+  and dropped. If the defer fails, TypeSafe is not called.
+- serenity handles each Discord event in its own task, so even an unexpected
+  panic ends that one interaction, not the bot.
 
 ## Results
 
-- Offline: see the task's result post on the board for the pinned commit.
-- Live: pending credentials.
+- Offline: fixed commits and evidence are on the board (#1-#4).
+- Live Jev contract: see "Live evidence" above.
+- Live Discord smoke: pending `DISCORD_GUILD_ID`.
