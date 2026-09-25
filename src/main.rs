@@ -200,16 +200,21 @@ fn arg<'a>(args: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
     args.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
 }
 
+/// A Discord reply attempt. serenity's error is 136 bytes, so it is boxed
+/// to keep the `Ok` path small; `?` boxes it automatically.
+type ReplyResult = Result<(), Box<serenity::Error>>;
+
 async fn reply_private(
     ctx: &Context,
     cmd: &CommandInteraction,
     text: String,
-) -> serenity::Result<()> {
+) -> ReplyResult {
     let msg = CreateInteractionResponseMessage::new()
         .content(text)
         .ephemeral(true);
     cmd.create_response(&ctx.http, CreateInteractionResponse::Message(msg))
         .await
+        .map_err(Box::new)
 }
 
 impl Handler {
@@ -218,7 +223,7 @@ impl Handler {
         ctx: &Context,
         cmd: &CommandInteraction,
         args: &[(&str, &str)],
-    ) -> serenity::Result<()> {
+    ) -> ReplyResult {
         let (Some(question), Some(options)) = (arg(args, "question"), arg(args, "options")) else {
             return Ok(());
         };
@@ -268,7 +273,7 @@ impl Handler {
         ctx: &Context,
         cmd: &CommandInteraction,
         args: &[(&str, &str)],
-    ) -> serenity::Result<()> {
+    ) -> ReplyResult {
         let (Some(text), Some(question), Some(levels)) = (
             arg(args, "text"),
             arg(args, "question"),
@@ -321,7 +326,7 @@ impl Handler {
         ctx: &Context,
         cmd: &CommandInteraction,
         args: &[(&str, &str)],
-    ) -> serenity::Result<()> {
+    ) -> ReplyResult {
         let (Some(text), Some(question)) = (arg(args, "text"), arg(args, "question")) else {
             return Ok(());
         };
