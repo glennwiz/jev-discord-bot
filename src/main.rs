@@ -1,8 +1,10 @@
-//! Discord Gateway bot: registers `/jev choice` in one test guild and answers
-//! it through Jev. Choice logic lives in `choice/`; this file is only glue.
+//! Discord Gateway bot: registers `/jev choice` and `/jev score` in one test
+//! guild and answers them through Jev. Feature logic lives in `choice/` and
+//! `score/`; this file is only glue.
 
 mod choice;
 mod config;
+mod score;
 
 use serenity::all::{
     CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption,
@@ -14,10 +16,12 @@ use serenity::Client;
 
 use choice::{render, ChoiceRequest, JevClient};
 use config::Config;
+use score::{ScoreClient, ScoreRequest};
 
 struct Handler {
     guild: GuildId,
     jev: JevClient,
+    score: ScoreClient,
 }
 
 fn jev_command() -> CreateCommand {
@@ -41,36 +45,60 @@ fn jev_command() -> CreateCommand {
                 .required(false)
                 .max_length(4_000),
         );
-    CreateCommand::new("jev").description("Ask Jev for a typed decision").add_option(choice)
+    let score = CreateCommandOption::new(CommandOptionType::SubCommand, "score", "Let Jev place text on your ordered levels")
+        .add_sub_option(
+            CreateCommandOption::new(CommandOptionType::String, "text", "The text Jev should score")
+                .required(true)
+                .max_length(4_000),
+        )
+        .add_sub_option(
+            CreateCommandOption::new(CommandOptionType::String, "question", "What should be measured?")
+                .required(true)
+                .max_length(score::input::MAX_QUESTION_CHARS as u16),
+        )
+        .add_sub_option(
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "levels",
+                "2-10 levels, lowest first, separated by commas (or | if levels contain commas)",
+            )
+            .required(true)
+            .max_length(score::input::MAX_CRITERIA_CHARS as u16),
+        );
+    CreateCommand::new("jev")
+        .description("Ask Jev for a typed decision")
+        .add_option(choice)
+        .add_option(score)
 }
 
-/// String sub-options of `/jev choice`, by name.
-fn choice_args(cmd: &CommandInteraction) -> Option<(String, String, Option<String>)> {
-    let sub = cmd.data.options.iter().find(|o| o.name == "choice")?;
+/// The invoked `/jev` subcommand's name and its string options.
+fn sub_args(cmd: &CommandInteraction) -> Option<(&str, Vec<(&str, &str)>)> {
+    let sub = cmd.data.options.first()?;
     let CommandDataOptionValue::SubCommand(opts) = &sub.value else {
         return None;
     };
-    let get = |name: &str| {
-        opts.iter()
-            .find(|o| o.name == name)
-            .and_then(|o| o.value.as_str())
-            .map(str::to_string)
-    };
-    Some((get("question")?, get("options")?, get("context")))
+    let strings = opts.iter().filter_map(|o| Some((o.name.as_str(), o.value.as_str()?))).collect();
+    Some((sub.name.as_str(), strings))
+}
+
+fn arg<'a>(args: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
+    args.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
+}
+
+async fn reply_private(ctx: &Context, cmd: &CommandInteraction, text: String) -> serenity::Result<()> {
+    let msg = CreateInteractionResponseMessage::new().content(text).ephemeral(true);
+    cmd.create_response(&ctx.http, CreateInteractionResponse::Message(msg)).await
 }
 
 impl Handler {
-    async fn handle_choice(&self, ctx: &Context, cmd: &CommandInteraction) -> serenity::Result<()> {
-        let Some((question, options, context)) = choice_args(cmd) else {
+    async fn handle_choice(&self, ctx: &Context, cmd: &CommandInteraction, args: &[(&str, &str)]) -> serenity::Result<()> {
+        let (Some(question), Some(options)) = (arg(args, "question"), arg(args, "options")) else {
             return Ok(());
         };
         // Bad input never reaches Jev: answer privately and stop.
-        let req = match ChoiceRequest::parse(&question, &options, context.as_deref()) {
+        let req = match ChoiceRequest::parse(question, options, arg(args, "context")) {
             Ok(r) => r,
-            Err(e) => {
-                let msg = CreateInteractionResponseMessage::new().content(render::input_error(&e)).ephemeral(true);
-                return cmd.create_response(&ctx.http, CreateInteractionResponse::Message(msg)).await;
-            }
+            Err(e) => return reply_private(ctx, cmd, render::input_error(&e)).await,
         };
         // Acknowledge inside Discord's 3 s window before the network call.
         cmd.defer(&ctx.http).await?;
@@ -97,6 +125,41 @@ impl Handler {
         cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(text)).await?;
         Ok(())
     }
+
+    async fn handle_score(&self, ctx: &Context, cmd: &CommandInteraction, args: &[(&str, &str)]) -> serenity::Result<()> {
+        let (Some(text), Some(question), Some(levels)) = (arg(args, "text"), arg(args, "question"), arg(args, "levels"))
+        else {
+            return Ok(());
+        };
+        // Bad input never reaches Jev: answer privately and stop.
+        let req = match ScoreRequest::parse(text, question, levels) {
+            Ok(r) => r,
+            Err(e) => return reply_private(ctx, cmd, score::render::input_error(&e)).await,
+        };
+        // Acknowledge inside Discord's 3 s window before the network call.
+        cmd.defer(&ctx.http).await?;
+        let started = std::time::Instant::now();
+        let reply = match self.score.score(&req, Some(&format!("discord-{}", cmd.id))).await {
+            Ok(out) => {
+                eprintln!(
+                    "score ok: interaction={} levels={} score={} confidence={:.3} input_tokens={:?} ms={}",
+                    cmd.id,
+                    req.levels.len(),
+                    out.score,
+                    out.confidence,
+                    out.input_tokens,
+                    started.elapsed().as_millis()
+                );
+                score::render::outcome(&req, &out)
+            }
+            Err(e) => {
+                eprintln!("score failed: interaction={} error={} ms={}", cmd.id, e, started.elapsed().as_millis());
+                score::render::jev_error(&e)
+            }
+        };
+        cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply)).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -116,7 +179,15 @@ impl EventHandler for Handler {
         if cmd.data.name != "jev" || cmd.guild_id != Some(self.guild) {
             return;
         }
-        if let Err(e) = self.handle_choice(&ctx, &cmd).await {
+        let Some((sub, args)) = sub_args(&cmd) else {
+            return;
+        };
+        let result = match sub {
+            "choice" => self.handle_choice(&ctx, &cmd, &args).await,
+            "score" => self.handle_score(&ctx, &cmd, &args).await,
+            _ => Ok(()),
+        };
+        if let Err(e) = result {
             eprintln!("discord reply failed: interaction={} error={e}", cmd.id);
         }
     }
@@ -136,7 +207,11 @@ async fn main() {
         eprintln!("jev client error: {e}");
         std::process::exit(2);
     });
-    let handler = Handler { guild: GuildId::new(cfg.guild_id), jev };
+    let score = ScoreClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout).unwrap_or_else(|e| {
+        eprintln!("jev client error: {e}");
+        std::process::exit(2);
+    });
+    let handler = Handler { guild: GuildId::new(cfg.guild_id), jev, score };
     // Slash commands arrive without privileged or message intents.
     let mut client = Client::builder(&cfg.discord_token, GatewayIntents::empty())
         .event_handler(handler)
