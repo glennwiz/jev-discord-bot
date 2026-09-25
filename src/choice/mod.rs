@@ -17,5 +17,8 @@ pub mod input;
 pub mod jev;
 pub mod render;
 
+// The bot and the tests each use a different subset of these.
+#[allow(unused_imports)]
 pub use input::{ChoiceRequest, InputError};
+#[allow(unused_imports)]
 pub use jev::{ChoiceOutcome, JevClient, JevError};
