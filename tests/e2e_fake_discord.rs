@@ -236,6 +236,8 @@ fn interaction(token: &str, sub: &str, opts: &[(&str, &str)]) -> (String, Value)
         "version": 1, "guild_id": GUILD_ID, "channel_id": "555",
         "locale": "en-US", "guild_locale": "en-US", "app_permissions": "0",
         "user": user_json("666", "tester", false), "entitlements": [],
+        // Required by serenity 0.12.5's Interaction deserializer.
+        "attachment_size_limit": 8_388_608,
         "data": {"id": "777", "name": "jev", "type": 1,
                  "options": [{"name": sub, "type": 1, "options": options}]}
     });
