@@ -264,34 +264,39 @@ async fn non_2xx_without_envelope_still_reports_status() {
 
 #[tokio::test]
 async fn malformed_typed_responses_are_rejected() {
-    let cases: Vec<(&str, String)> = vec![
-        ("not json", "this is not json".into()),
-        ("no answers", json!({"model": "jev-latest"}).to_string()),
-        ("wrong question name", json!({"answers": {"route": sushi_answer()}}).to_string()),
-        ("wrong type", ok_body(json!({"type": "score", "score": 1.4, "confidence": 0.8}))),
-        ("missing choice", ok_body(json!({"type": "choice", "probabilities": {"sushi": 0.7}, "confidence": 0.5}))),
+    // (case, body, substring the rejection reason must contain) - the reason
+    // pins WHICH check fired, since several checks overlap.
+    let cases: Vec<(&str, String, &str)> = vec![
+        ("not json", "this is not json".into(), "not a Jev response"),
+        ("no answers", json!({"model": "jev-latest"}).to_string(), "not a Jev response"),
+        ("wrong question name", json!({"answers": {"route": sushi_answer()}}).to_string(), "no answer for \"pick\""),
+        ("wrong type", ok_body(json!({"type": "score", "score": 1.4, "confidence": 0.8})), "expected \"choice\""),
+        ("missing choice", ok_body(json!({"type": "choice", "probabilities": {"sushi": 0.7}, "confidence": 0.5})), "no choice"),
         ("choice not offered", ok_body(json!({"type": "choice", "choice": "ramen",
-            "probabilities": {"sushi": 0.7}, "confidence": 0.5}))),
+            "probabilities": {"sushi": 0.3, "ramen": 0.7}, "confidence": 0.5})), "not one of the options"),
         ("choice as number", ok_body(json!({"type": "choice", "choice": 2,
-            "probabilities": {"sushi": 0.7}, "confidence": 0.5}))),
-        ("missing probabilities", ok_body(json!({"type": "choice", "choice": "sushi", "confidence": 0.5}))),
+            "probabilities": {"sushi": 0.7}, "confidence": 0.5})), "not a Jev response"),
+        ("missing probabilities", ok_body(json!({"type": "choice", "choice": "sushi", "confidence": 0.5})), "no probabilities"),
         ("no probability for choice", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"pizza": 0.7}, "confidence": 0.5}))),
+            "probabilities": {"pizza": 0.7}, "confidence": 0.5})), "no probability for picked option"),
         ("unknown option in probabilities", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": 0.7, "ramen": 0.3}, "confidence": 0.5}))),
+            "probabilities": {"sushi": 0.7, "ramen": 0.3}, "confidence": 0.5})), "unknown option \"ramen\""),
         ("probability out of range", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": 1.7}, "confidence": 0.5}))),
+            "probabilities": {"sushi": 1.7}, "confidence": 0.5})), "probability 1.7 is outside"),
         ("probability as string", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": "0.7"}, "confidence": 0.5}))),
+            "probabilities": {"sushi": "0.7"}, "confidence": 0.5})), "not a Jev response"),
         ("missing confidence", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": 0.7}}))),
+            "probabilities": {"sushi": 0.7}})), "no confidence"),
         ("negative confidence", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": 0.7}, "confidence": -0.1}))),
+            "probabilities": {"sushi": 0.7}, "confidence": -0.1})), "confidence -0.1 is outside"),
     ];
-    for (name, body) in cases {
+    for (name, body, reason) in cases {
         let (base, _) = fake_jev(Reply::Json(200, body)).await;
         let err = client(&base, 2_000).choose(&lunch(), None).await.unwrap_err();
-        assert!(matches!(err, JevError::Malformed(_)), "{name}: got {err:?}");
+        match &err {
+            JevError::Malformed(why) => assert!(why.contains(reason), "{name}: reason {why:?} lacks {reason:?}"),
+            other => panic!("{name}: got {other:?}"),
+        }
     }
 }
 
