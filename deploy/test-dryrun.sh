@@ -59,6 +59,21 @@ else
     echo "SKIP --start refusal (no ad-hoc bot running)"
 fi
 
+# --start guard against a fake process table: install.sh's own argv holds a
+# target/release path, which must NOT count as an ad-hoc bot.
+mkdir -p "$T/rel/target/release" "$T/fakeproc/1" "$T/fakeproc/2"
+cp "$T/bin/v2" "$T/rel/target/release/jev-discord-bot"
+ln -s /usr/bin/bash "$T/fakeproc/1/exe"
+ln -s "$T/root/opt/jev-discord-bot/jev-discord-bot-2222222bbbbb" "$T/fakeproc/2/exe"
+: >"$OUT"; run env JEV_DEPLOY_PROC="$T/fakeproc" bash "$REPO/deploy/install.sh" "$T/rel/target/release/jev-discord-bot" 2222222bbbbb --start
+check "--start proceeds: own target/release argv and the service's binary do not count" 'grep -q "\[dry-run\] systemctl restart" "$OUT" && ! grep -q "still running" "$OUT"'
+mkdir -p "$T/fakeproc/3"; ln -s /home/someone/dev/jev-discord-bot/target/release/jev-discord-bot "$T/fakeproc/3/exe"
+: >"$OUT"; run env JEV_DEPLOY_PROC="$T/fakeproc" bash "$REPO/deploy/install.sh" "$T/rel/target/release/jev-discord-bot" 2222222bbbbb --start
+check "--start refused for an ad-hoc bot exe" 'grep -q "still running (pid exe: 3 /home/someone" "$OUT" && ! grep -q "\[dry-run\] systemctl restart" "$OUT"'
+rm -f "$T/fakeproc/3/exe"; ln -s "/home/someone/target/release/jev-discord-bot (deleted)" "$T/fakeproc/3/exe"
+: >"$OUT"; run env JEV_DEPLOY_PROC="$T/fakeproc" bash "$REPO/deploy/install.sh" "$T/rel/target/release/jev-discord-bot" 2222222bbbbb --start
+check "--start refused for a replaced (deleted) ad-hoc exe" 'grep -q "still running" "$OUT"'
+
 sed -i 's/^JEV_BASE_URL=.*/JEV_TIMEOUT_SECS=15/' "$T/src.env"
 : >"$OUT"; run bash "$REPO/deploy/install.sh" "$T/bin/v2" 2222222bbbbb "$T/src.env" --refresh-env
 check "refresh-env keeps env.previous" '[ -f "$ENVF.previous" ] && grep -q "^JEV_TIMEOUT_SECS=" "$ENVF" && grep -q "^JEV_BASE_URL=" "$ENVF.previous" && [ "$(stat -c %a "$ENVF.previous")" = 640 ]'
