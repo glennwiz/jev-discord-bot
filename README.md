@@ -147,12 +147,19 @@ startup `config:` line prints them as `<redacted>`.
 
 ```sh
 cargo fetch                       # the only step that needs the internet
-cargo test --offline              # 35 tests: 13 choice, 10 score, 12 noul; no Discord, network or keys
+cargo test --offline              # every suite below; no Discord, network or keys
 cargo fmt --check
 cargo clippy --offline --all-targets -- -D warnings
 cargo build --release --offline
 ./target/release/jev-discord-bot  # reads .env; logs "registered 1 guild command(s)"
 ```
+
+What `cargo test --offline` runs (each prints its own `test result:` line):
+the config unit test in `src/config.rs`; `tests/{choice,score,noul}_fake_jev.rs`
+against a fake TypeSafe; `tests/e2e_fake_discord.rs`, which starts the real
+binary against a fake Discord and TypeSafe (failure handling, SIGTERM drain);
+and `tests/live_probe.rs`, which is ignored unless asked for.
+`cargo test --offline --test e2e_fake_discord` runs one suite on its own.
 
 `cargo test` needs no network: it also passes inside
 `unshare -rn sh -c 'ip link set lo up; cargo test --offline'`. The live probe
@@ -255,6 +262,13 @@ to 30 s (`TimeoutStopSec`).
 Keep the last two or three versions; delete older ones by hand.
 
 **Rotate a secret:** `sudoedit /etc/jev-discord-bot/env`, then restart.
+
+`deploy/install.sh <binary> <commit> [<source .env>] [--start]` does all of the
+above idempotently (user, directories, env file built from a `.env` by key
+name, versioned binary, symlinks, unit, enable); `deploy/rollback.sh
+[--config]` swaps back to the previous binary (and env). Both refuse to start
+the service while an ad-hoc bot with the same token is running, and
+`deploy/test-dryrun.sh` exercises them without root.
 
 Restart policy: `on-failure` every 5 s, at most 5 starts in 5 minutes; a
 config error (exit 2) is not restarted, because restarting cannot fix it.

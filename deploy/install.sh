@@ -39,6 +39,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 say() { printf 'install: %s\n' "$*"; }
 die() { printf 'install: ERROR: %s\n' "$*" >&2; exit 1; }
 priv() { if [ "$DRY" = 1 ]; then say "[dry-run] $*"; else "$@"; fi; }
+# shellcheck source=deploy/lib.sh
+. "$HERE/lib.sh"
 
 START=0 REFRESH_ENV=0 ARGS=()
 for a in "$@"; do
@@ -139,25 +141,8 @@ priv systemctl daemon-reload
 priv systemctl enable "$UNIT"
 
 # 6. Optional (re)start - never alongside an ad-hoc bot with the same token.
-# Matches on each process's executable, not its command line: this script's
-# own argv (and sudo's) contains the binary path, but their exe is bash/sudo.
-# The service's own binaries under /opt/jev-discord-bot do not count.
-adhoc_bots() {
-    local p exe
-    for p in "$PROC"/[0-9]*; do
-        exe=$(readlink "$p/exe" 2>/dev/null) || continue
-        exe=${exe% (deleted)}
-        case "$exe" in
-            "$OPT"/* | /opt/jev-discord-bot/*) ;;
-            */jev-discord-bot | */jev-discord-bot-*) printf '%s %s\n' "${p##*/}" "$exe" ;;
-        esac
-    done
-}
 if [ "$START" = 1 ]; then
-    running=$(adhoc_bots)
-    if [ -n "$running" ]; then
-        die "an ad-hoc jev-discord-bot is still running (pid exe: $running); stop it first - same Discord token"
-    fi
+    require_no_adhoc_bot
     priv systemctl restart "$UNIT"
     say "service restarted"
     priv systemctl --no-pager --lines=0 status "$UNIT" || true

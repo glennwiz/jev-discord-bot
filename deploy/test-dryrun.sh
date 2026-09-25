@@ -9,6 +9,10 @@ REPO=${REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 T=${JEV_TEST_SCRATCH:-$HOME/jev-scratch}/deploy-test
 rm -rf "$T" && mkdir -p "$T/root" "$T/bin"
 export JEV_DEPLOY_ROOT=$T/root JEV_DEPLOY_DRYRUN=1
+# Default: an empty fake process table, so steps do not depend on whatever
+# bots happen to run on this machine. Checks that want real /proc say so.
+mkdir -p "$T/noproc"
+export JEV_DEPLOY_PROC=$T/noproc
 fail=0
 check() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
@@ -52,7 +56,7 @@ check "rollback -> v1" '[ "$(readlink "$T/root/opt/jev-discord-bot/jev-discord-b
 : >"$OUT"; run bash "$REPO/deploy/rollback.sh"
 check "rollback twice -> v2" '[ "$(readlink "$T/root/opt/jev-discord-bot/jev-discord-bot")" = jev-discord-bot-2222222bbbbb ]'
 
-: >"$OUT"; run bash "$REPO/deploy/install.sh" "$T/bin/v2" 2222222bbbbb --start
+: >"$OUT"; run env JEV_DEPLOY_PROC=/proc bash "$REPO/deploy/install.sh" "$T/bin/v2" 2222222bbbbb --start
 if pgrep -f 'target/release/jev-discord-bot' >/dev/null; then
     check "--start refused while ad-hoc bot runs" 'grep -q "ad-hoc jev-discord-bot is still running" "$OUT" && ! grep -q "\[dry-run\] systemctl restart" "$OUT"'
 else
@@ -73,6 +77,14 @@ check "--start refused for an ad-hoc bot exe" 'grep -q "still running (pid exe: 
 rm -f "$T/fakeproc/3/exe"; ln -s "/home/someone/target/release/jev-discord-bot (deleted)" "$T/fakeproc/3/exe"
 : >"$OUT"; run env JEV_DEPLOY_PROC="$T/fakeproc" bash "$REPO/deploy/install.sh" "$T/rel/target/release/jev-discord-bot" 2222222bbbbb --start
 check "--start refused for a replaced (deleted) ad-hoc exe" 'grep -q "still running" "$OUT"'
+
+# rollback.sh: refused (and nothing changed) while an ad-hoc bot runs.
+cur_before=$(readlink "$T/root/opt/jev-discord-bot/jev-discord-bot"); prev_before=$(readlink "$T/root/opt/jev-discord-bot/previous")
+: >"$OUT"; run env JEV_DEPLOY_PROC="$T/fakeproc" bash "$REPO/deploy/rollback.sh"
+check "rollback refused while an ad-hoc bot runs, symlinks untouched" 'grep -q "still running (pid exe: 3 " "$OUT" && ! grep -q "\[dry-run\] systemctl restart" "$OUT" && [ "$(readlink "$T/root/opt/jev-discord-bot/jev-discord-bot")" = "$cur_before" ] && [ "$(readlink "$T/root/opt/jev-discord-bot/previous")" = "$prev_before" ]'
+# rollback.sh --config with no env.previous: refused before the binary swap.
+: >"$OUT"; run bash "$REPO/deploy/rollback.sh" --config
+check "rollback --config without env.previous refused, binary untouched" 'grep -q "no .*env.previous" "$OUT" && [ "$(readlink "$T/root/opt/jev-discord-bot/jev-discord-bot")" = "$cur_before" ]'
 
 sed -i 's/^JEV_BASE_URL=.*/JEV_TIMEOUT_SECS=15/' "$T/src.env"
 : >"$OUT"; run bash "$REPO/deploy/install.sh" "$T/bin/v2" 2222222bbbbb "$T/src.env" --refresh-env
