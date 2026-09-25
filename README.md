@@ -264,6 +264,9 @@ journalctl -u jev-discord-bot --since today   # today's
 Lines to expect: `config: Config { ..<redacted>.. }`, `connected as <bot> (guild <id>)`,
 `registered 1 guild command(s)`, per command `choice ok|score ok|noul ok: interaction=<id> ...`
 (counts, numbers, input tokens and latency) or `... failed: interaction=<id> error=...`,
+then `<command> timing: interaction=<id> gateway_ms=.. defer_ms=.. jev_ms=.. edit_ms=.. total_ms=..`
+(`gateway_ms`: Discord creation to receipt, from the id's timestamp; `defer_ms`:
+receipt to defer acknowledged, which must stay under Discord's 3 s),
 `discord reply failed: ...`, and on stop `shutdown: SIGTERM received` then
 `shutdown: clean`. Logs never contain tokens, keys or the users' text.
 

@@ -9,7 +9,7 @@ mod score;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serenity::all::{
     CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand,
@@ -200,6 +200,49 @@ fn arg<'a>(args: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
     args.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
 }
 
+/// Per-command timing for the live logs. `gateway_ms` is how old the
+/// interaction was when we received it (its id encodes Discord's creation
+/// time; can be slightly negative under clock skew). The rest are measured
+/// here: receive -> defer acknowledged -> Jev answered -> reply edited.
+struct Timing {
+    command: &'static str,
+    interaction: u64,
+    received: Instant,
+    gateway_ms: i128,
+}
+
+impl Timing {
+    fn start(command: &'static str, interaction: u64) -> Self {
+        // Discord snowflake: milliseconds since 2015-01-01 in the top 42 bits.
+        let created_ms = (interaction >> 22) as i128 + 1_420_070_400_000;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i128)
+            .unwrap_or(created_ms);
+        Timing {
+            command,
+            interaction,
+            received: Instant::now(),
+            gateway_ms: now_ms - created_ms,
+        }
+    }
+
+    /// Log once the reply has been edited.
+    fn log(&self, deferred: Instant, answered: Instant) {
+        let edited = Instant::now();
+        eprintln!(
+            "{} timing: interaction={} gateway_ms={} defer_ms={} jev_ms={} edit_ms={} total_ms={}",
+            self.command,
+            self.interaction,
+            self.gateway_ms,
+            deferred.duration_since(self.received).as_millis(),
+            answered.duration_since(deferred).as_millis(),
+            edited.duration_since(answered).as_millis(),
+            edited.duration_since(self.received).as_millis(),
+        );
+    }
+}
+
 /// A Discord reply attempt. serenity's error is 136 bytes, so it is boxed
 /// to keep the `Ok` path small; `?` boxes it automatically.
 type ReplyResult = Result<(), Box<serenity::Error>>;
@@ -220,6 +263,7 @@ impl Handler {
         cmd: &CommandInteraction,
         args: &[(&str, &str)],
     ) -> ReplyResult {
+        let timing = Timing::start("choice", cmd.id.get());
         let (Some(question), Some(options)) = (arg(args, "question"), arg(args, "options")) else {
             return Ok(());
         };
@@ -230,7 +274,7 @@ impl Handler {
         };
         // Acknowledge inside Discord's 3 s window before the network call.
         cmd.defer(&ctx.http).await?;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let text = match self
             .jev
             .choose(&req, Some(&format!("discord-{}", cmd.id)))
@@ -259,8 +303,10 @@ impl Handler {
                 render::jev_error(&e)
             }
         };
+        let answered = Instant::now();
         cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(text))
             .await?;
+        timing.log(started, answered);
         Ok(())
     }
 
@@ -270,6 +316,7 @@ impl Handler {
         cmd: &CommandInteraction,
         args: &[(&str, &str)],
     ) -> ReplyResult {
+        let timing = Timing::start("score", cmd.id.get());
         let (Some(text), Some(question), Some(levels)) = (
             arg(args, "text"),
             arg(args, "question"),
@@ -284,7 +331,7 @@ impl Handler {
         };
         // Acknowledge inside Discord's 3 s window before the network call.
         cmd.defer(&ctx.http).await?;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let reply = match self
             .score
             .score(&req, Some(&format!("discord-{}", cmd.id)))
@@ -312,8 +359,10 @@ impl Handler {
                 score::render::jev_error(&e)
             }
         };
+        let answered = Instant::now();
         cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply))
             .await?;
+        timing.log(started, answered);
         Ok(())
     }
 
@@ -323,6 +372,7 @@ impl Handler {
         cmd: &CommandInteraction,
         args: &[(&str, &str)],
     ) -> ReplyResult {
+        let timing = Timing::start("noul", cmd.id.get());
         let (Some(text), Some(question)) = (arg(args, "text"), arg(args, "question")) else {
             return Ok(());
         };
@@ -338,7 +388,7 @@ impl Handler {
         };
         // Acknowledge inside Discord's 3 s window before the network call.
         cmd.defer(&ctx.http).await?;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let reply = match self
             .noul
             .ask(&req, Some(&format!("discord-{}", cmd.id)))
@@ -365,8 +415,10 @@ impl Handler {
                 noul::render::jev_error(&e)
             }
         };
+        let answered = Instant::now();
         cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply))
             .await?;
+        timing.log(started, answered);
         Ok(())
     }
 }
