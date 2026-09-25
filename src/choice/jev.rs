@@ -43,7 +43,11 @@ pub enum JevError {
     /// No complete answer within the configured timeout.
     Timeout,
     /// Non-2xx; `kind`/`message` come from Jev's error envelope when present.
-    Status { status: u16, kind: Option<String>, message: Option<String> },
+    Status {
+        status: u16,
+        kind: Option<String>,
+        message: Option<String>,
+    },
     /// 2xx whose body does not match the typed choice contract.
     Malformed(String),
     /// Body larger than [`MAX_RESPONSE_BYTES`].
@@ -56,7 +60,11 @@ impl fmt::Display for JevError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             JevError::Timeout => write!(f, "Jev did not answer in time."),
-            JevError::Status { status, kind, message } => {
+            JevError::Status {
+                status,
+                kind,
+                message,
+            } => {
                 write!(f, "Jev returned HTTP {status}")?;
                 if let Some(k) = kind {
                     write!(f, " ({k})")?;
@@ -122,7 +130,11 @@ impl JevClient {
     }
 
     /// Send one request (no retries) and validate the typed answer.
-    pub async fn choose(&self, req: &ChoiceRequest, idempotency_key: Option<&str>) -> Result<ChoiceOutcome, JevError> {
+    pub async fn choose(
+        &self,
+        req: &ChoiceRequest,
+        idempotency_key: Option<&str>,
+    ) -> Result<ChoiceOutcome, JevError> {
         let mut builder = self
             .http
             .post(&self.endpoint)
@@ -145,7 +157,9 @@ impl JevClient {
         }
 
         if !status.is_success() {
-            let envelope = serde_json::from_slice::<ErrorEnvelope>(&body).ok().map(|e| e.error);
+            let envelope = serde_json::from_slice::<ErrorEnvelope>(&body)
+                .ok()
+                .map(|e| e.error);
             return Err(JevError::Status {
                 status: status.as_u16(),
                 kind: envelope.as_ref().and_then(|e| e.kind.clone()),
@@ -158,18 +172,26 @@ impl JevClient {
 
 /// Validate a 200 body against the choice contract for `req`.
 pub fn parse_choice(body: &[u8], req: &ChoiceRequest) -> Result<ChoiceOutcome, JevError> {
-    let wire: WireResponse =
-        serde_json::from_slice(body).map_err(|e| JevError::Malformed(format!("not a Jev response ({e})")))?;
+    let wire: WireResponse = serde_json::from_slice(body)
+        .map_err(|e| JevError::Malformed(format!("not a Jev response ({e})")))?;
     let answer = wire
         .answers
         .get(QUESTION_NAME)
         .ok_or_else(|| JevError::Malformed(format!("no answer for \"{QUESTION_NAME}\"")))?;
     if answer.kind.as_deref() != Some("choice") {
-        return Err(JevError::Malformed(format!("answer type is {:?}, expected \"choice\"", answer.kind)));
+        return Err(JevError::Malformed(format!(
+            "answer type is {:?}, expected \"choice\"",
+            answer.kind
+        )));
     }
-    let choice = answer.choice.clone().ok_or_else(|| JevError::Malformed("no choice".into()))?;
+    let choice = answer
+        .choice
+        .clone()
+        .ok_or_else(|| JevError::Malformed("no choice".into()))?;
     if !req.options.contains(&choice) {
-        return Err(JevError::Malformed(format!("picked \"{choice}\", which is not one of the options")));
+        return Err(JevError::Malformed(format!(
+            "picked \"{choice}\", which is not one of the options"
+        )));
     }
     let probabilities = answer
         .probabilities
@@ -177,14 +199,18 @@ pub fn parse_choice(body: &[u8], req: &ChoiceRequest) -> Result<ChoiceOutcome, J
         .ok_or_else(|| JevError::Malformed("no probabilities".into()))?;
     for (key, p) in probabilities {
         if !req.options.contains(key) {
-            return Err(JevError::Malformed(format!("probability for unknown option \"{key}\"")));
+            return Err(JevError::Malformed(format!(
+                "probability for unknown option \"{key}\""
+            )));
         }
         check_unit("probability", *p)?;
     }
-    let probability = *probabilities
-        .get(&choice)
-        .ok_or_else(|| JevError::Malformed(format!("no probability for picked option \"{choice}\"")))?;
-    let confidence = answer.confidence.ok_or_else(|| JevError::Malformed("no confidence".into()))?;
+    let probability = *probabilities.get(&choice).ok_or_else(|| {
+        JevError::Malformed(format!("no probability for picked option \"{choice}\""))
+    })?;
+    let confidence = answer
+        .confidence
+        .ok_or_else(|| JevError::Malformed("no confidence".into()))?;
     check_unit("confidence", confidence)?;
 
     Ok(ChoiceOutcome {

@@ -56,15 +56,23 @@ impl fmt::Display for InputError {
             }
             InputError::EmptyQuestion => write!(f, "The question is empty."),
             InputError::QuestionTooLong(n) => {
-                write!(f, "The question is {n} characters; the limit is {MAX_QUESTION_CHARS}.")
+                write!(
+                    f,
+                    "The question is {n} characters; the limit is {MAX_QUESTION_CHARS}."
+                )
             }
             InputError::TooFewLevels(n) => {
                 write!(f, "Give at least {MIN_LEVELS} levels, lowest first, separated by commas (got {n}).")
             }
-            InputError::TooManyLevels(n) => write!(f, "At most {MAX_LEVELS} levels are allowed (got {n})."),
+            InputError::TooManyLevels(n) => {
+                write!(f, "At most {MAX_LEVELS} levels are allowed (got {n}).")
+            }
             InputError::EmptyLevel(pos) => write!(f, "Level {pos} is empty."),
             InputError::LevelTooLong(pos) => {
-                write!(f, "Level {pos} is longer than {MAX_LEVEL_CHARS} characters.")
+                write!(
+                    f,
+                    "Level {pos} is longer than {MAX_LEVEL_CHARS} characters."
+                )
             }
             InputError::DuplicateLevel(l) => write!(f, "Level \"{l}\" is listed more than once."),
             InputError::CriteriaTooLong(n) => {
@@ -127,12 +135,20 @@ impl ScoreRequest {
             }
         }
 
-        let req = ScoreRequest { state: state.to_string(), question: question.to_string(), levels: lv };
-        let state_len = serde_json::to_string(&req.state).map(|s| s.chars().count()).unwrap_or(0);
+        let req = ScoreRequest {
+            state: state.to_string(),
+            question: question.to_string(),
+            levels: lv,
+        };
+        let state_len = serde_json::to_string(&req.state)
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
         if state_len > MAX_STATE_CHARS {
             return Err(InputError::StateTooLong(state_len));
         }
-        let crit_len = serde_json::to_string(&req.levels).map(|s| s.chars().count()).unwrap_or(0);
+        let crit_len = serde_json::to_string(&req.levels)
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
         if crit_len > MAX_CRITERIA_CHARS {
             return Err(InputError::CriteriaTooLong(crit_len));
         }

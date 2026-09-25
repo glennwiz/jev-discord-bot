@@ -47,10 +47,16 @@ impl fmt::Display for InputError {
             }
             InputError::EmptyQuestion => write!(f, "The question is empty."),
             InputError::QuestionTooLong(n) => {
-                write!(f, "The question is {n} characters; the limit is {MAX_QUESTION_CHARS}.")
+                write!(
+                    f,
+                    "The question is {n} characters; the limit is {MAX_QUESTION_CHARS}."
+                )
             }
             InputError::MeaningTooLong(side) => {
-                write!(f, "The description of \"{side}\" is longer than {MAX_MEANING_CHARS} characters.")
+                write!(
+                    f,
+                    "The description of \"{side}\" is longer than {MAX_MEANING_CHARS} characters."
+                )
             }
             InputError::CriteriaTooLong(n) => {
                 write!(f, "The yes/no descriptions are {n} characters once encoded; the limit is {MAX_CRITERIA_CHARS}.")
@@ -62,7 +68,12 @@ impl fmt::Display for InputError {
 impl std::error::Error for InputError {}
 
 impl NoulRequest {
-    pub fn parse(state: &str, question: &str, yes_means: Option<&str>, no_means: Option<&str>) -> Result<Self, InputError> {
+    pub fn parse(
+        state: &str,
+        question: &str,
+        yes_means: Option<&str>,
+        no_means: Option<&str>,
+    ) -> Result<Self, InputError> {
         let state = state.trim();
         if state.is_empty() {
             return Err(InputError::EmptyState);
@@ -77,7 +88,9 @@ impl NoulRequest {
         }
         let meaning = |v: Option<&str>, side: &'static str| -> Result<Option<String>, InputError> {
             match v.map(str::trim).filter(|m| !m.is_empty()) {
-                Some(m) if m.chars().count() > MAX_MEANING_CHARS => Err(InputError::MeaningTooLong(side)),
+                Some(m) if m.chars().count() > MAX_MEANING_CHARS => {
+                    Err(InputError::MeaningTooLong(side))
+                }
                 m => Ok(m.map(str::to_string)),
             }
         };
@@ -88,12 +101,16 @@ impl NoulRequest {
             no_means: meaning(no_means, "no")?,
         };
 
-        let state_len = serde_json::to_string(&req.state).map(|s| s.chars().count()).unwrap_or(0);
+        let state_len = serde_json::to_string(&req.state)
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
         if state_len > MAX_STATE_CHARS {
             return Err(InputError::StateTooLong(state_len));
         }
         if let Some(c) = req.criteria() {
-            let crit_len = serde_json::to_string(&c).map(|s| s.chars().count()).unwrap_or(0);
+            let crit_len = serde_json::to_string(&c)
+                .map(|s| s.chars().count())
+                .unwrap_or(0);
             if crit_len > MAX_CRITERIA_CHARS {
                 return Err(InputError::CriteriaTooLong(crit_len));
             }

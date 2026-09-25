@@ -44,21 +44,33 @@ impl fmt::Display for InputError {
         match self {
             InputError::EmptyQuestion => write!(f, "The question is empty."),
             InputError::QuestionTooLong(n) => {
-                write!(f, "The question is {n} characters; the limit is {MAX_QUESTION_CHARS}.")
+                write!(
+                    f,
+                    "The question is {n} characters; the limit is {MAX_QUESTION_CHARS}."
+                )
             }
             InputError::TooFewOptions(n) => {
-                write!(f, "Give at least {MIN_OPTIONS} options separated by commas (got {n}).")
+                write!(
+                    f,
+                    "Give at least {MIN_OPTIONS} options separated by commas (got {n})."
+                )
             }
             InputError::TooManyOptions(n) => {
                 write!(f, "At most {MAX_OPTIONS} options are allowed (got {n}).")
             }
             InputError::EmptyOption(pos) => write!(f, "Option {pos} is empty."),
             InputError::OptionTooLong(pos) => {
-                write!(f, "Option {pos} is longer than {MAX_OPTION_CHARS} characters.")
+                write!(
+                    f,
+                    "Option {pos} is longer than {MAX_OPTION_CHARS} characters."
+                )
             }
             InputError::DuplicateOption(o) => write!(f, "Option \"{o}\" is listed more than once."),
             InputError::StateTooLong(n) => {
-                write!(f, "The context is {n} characters once encoded; the limit is {MAX_STATE_CHARS}.")
+                write!(
+                    f,
+                    "The context is {n} characters once encoded; the limit is {MAX_STATE_CHARS}."
+                )
             }
             InputError::CriteriaTooLong(n) => {
                 write!(f, "The options are {n} characters once encoded; the limit is {MAX_CRITERIA_CHARS}.")
@@ -105,7 +117,10 @@ impl ChoiceRequest {
         if opts.len() > MAX_OPTIONS {
             return Err(InputError::TooManyOptions(opts.len()));
         }
-        if let Some(pos) = opts.iter().position(|o| o.chars().count() > MAX_OPTION_CHARS) {
+        if let Some(pos) = opts
+            .iter()
+            .position(|o| o.chars().count() > MAX_OPTION_CHARS)
+        {
             return Err(InputError::OptionTooLong(pos + 1));
         }
         // Options become JSON object keys, so duplicates would collapse;
@@ -117,14 +132,25 @@ impl ChoiceRequest {
             }
         }
 
-        let context = context.map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
-        let req = ChoiceRequest { question: question.to_string(), options: opts, context };
+        let context = context
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(str::to_string);
+        let req = ChoiceRequest {
+            question: question.to_string(),
+            options: opts,
+            context,
+        };
 
-        let state_len = serde_json::to_string(&req.state()).map(|s| s.chars().count()).unwrap_or(0);
+        let state_len = serde_json::to_string(&req.state())
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
         if state_len > MAX_STATE_CHARS {
             return Err(InputError::StateTooLong(state_len));
         }
-        let crit_len = serde_json::to_string(&req.criteria()).map(|s| s.chars().count()).unwrap_or(0);
+        let crit_len = serde_json::to_string(&req.criteria())
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
         if crit_len > MAX_CRITERIA_CHARS {
             return Err(InputError::CriteriaTooLong(crit_len));
         }

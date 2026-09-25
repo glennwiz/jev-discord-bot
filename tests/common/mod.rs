@@ -21,7 +21,10 @@ pub struct Seen {
 
 impl Seen {
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -40,11 +43,15 @@ pub async fn fake_jev(reply: Reply) -> (String, Arc<Mutex<Vec<Seen>>>) {
     let reply = Arc::new(reply);
     tokio::spawn(async move {
         loop {
-            let Ok((mut sock, _)) = listener.accept().await else { return };
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
             let log = log.clone();
             let reply = reply.clone();
             tokio::spawn(async move {
-                let Some(req) = read_request(&mut sock).await else { return };
+                let Some(req) = read_request(&mut sock).await else {
+                    return;
+                };
                 log.lock().unwrap().push(req);
                 match &*reply {
                     Reply::Stall(d) => tokio::time::sleep(*d).await,
@@ -96,5 +103,9 @@ async fn read_request(sock: &mut tokio::net::TcpStream) -> Option<Seen> {
         buf.extend_from_slice(&tmp[..n]);
     }
     let body = serde_json::from_slice(&buf[head_end..head_end + len]).unwrap_or(Value::Null);
-    Some(Seen { request_line, headers, body })
+    Some(Seen {
+        request_line,
+        headers,
+        body,
+    })
 }

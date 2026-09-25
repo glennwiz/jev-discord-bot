@@ -43,7 +43,11 @@ pub enum NoulError {
     /// No complete answer within the configured timeout.
     Timeout,
     /// Non-2xx; `kind`/`message` come from Jev's error envelope when present.
-    Status { status: u16, kind: Option<String>, message: Option<String> },
+    Status {
+        status: u16,
+        kind: Option<String>,
+        message: Option<String>,
+    },
     /// 2xx whose body does not match the typed noul contract.
     Malformed(String),
     /// Body larger than [`MAX_RESPONSE_BYTES`].
@@ -56,7 +60,11 @@ impl fmt::Display for NoulError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             NoulError::Timeout => write!(f, "Jev did not answer in time."),
-            NoulError::Status { status, kind, message } => {
+            NoulError::Status {
+                status,
+                kind,
+                message,
+            } => {
                 write!(f, "Jev returned HTTP {status}")?;
                 if let Some(k) = kind {
                     write!(f, " ({k})")?;
@@ -120,7 +128,11 @@ impl NoulClient {
     }
 
     /// Send one request (no retries) and validate the typed answer.
-    pub async fn ask(&self, req: &NoulRequest, idempotency_key: Option<&str>) -> Result<NoulOutcome, NoulError> {
+    pub async fn ask(
+        &self,
+        req: &NoulRequest,
+        idempotency_key: Option<&str>,
+    ) -> Result<NoulOutcome, NoulError> {
         let mut builder = self
             .http
             .post(&self.endpoint)
@@ -143,7 +155,9 @@ impl NoulClient {
         }
 
         if !status.is_success() {
-            let envelope = serde_json::from_slice::<ErrorEnvelope>(&body).ok().map(|e| e.error);
+            let envelope = serde_json::from_slice::<ErrorEnvelope>(&body)
+                .ok()
+                .map(|e| e.error);
             return Err(NoulError::Status {
                 status: status.as_u16(),
                 kind: envelope.as_ref().and_then(|e| e.kind.clone()),
@@ -156,20 +170,31 @@ impl NoulClient {
 
 /// Validate a 200 body against the noul contract.
 pub fn parse_noul(body: &[u8]) -> Result<NoulOutcome, NoulError> {
-    let wire: WireResponse =
-        serde_json::from_slice(body).map_err(|e| NoulError::Malformed(format!("not a Jev response ({e})")))?;
+    let wire: WireResponse = serde_json::from_slice(body)
+        .map_err(|e| NoulError::Malformed(format!("not a Jev response ({e})")))?;
     let answer = wire
         .answers
         .get(QUESTION_NAME)
         .ok_or_else(|| NoulError::Malformed(format!("no answer for \"{QUESTION_NAME}\"")))?;
     if answer.kind.as_deref() != Some("noul") {
-        return Err(NoulError::Malformed(format!("answer type is {:?}, expected \"noul\"", answer.kind)));
+        return Err(NoulError::Malformed(format!(
+            "answer type is {:?}, expected \"noul\"",
+            answer.kind
+        )));
     }
-    let p_yes = answer.noul.ok_or_else(|| NoulError::Malformed("no noul probability".into()))?;
+    let p_yes = answer
+        .noul
+        .ok_or_else(|| NoulError::Malformed("no noul probability".into()))?;
     if !(p_yes.is_finite() && (0.0..=1.0).contains(&p_yes)) {
-        return Err(NoulError::Malformed(format!("P(yes) {p_yes} is outside [0, 1]")));
+        return Err(NoulError::Malformed(format!(
+            "P(yes) {p_yes} is outside [0, 1]"
+        )));
     }
-    Ok(NoulOutcome { p_yes, model: wire.model, input_tokens: wire.usage.and_then(|u| u.input_tokens) })
+    Ok(NoulOutcome {
+        p_yes,
+        model: wire.model,
+        input_tokens: wire.usage.and_then(|u| u.input_tokens),
+    })
 }
 
 fn map_reqwest(e: reqwest::Error) -> NoulError {

@@ -25,7 +25,10 @@ struct Seen {
 
 impl Seen {
     fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -44,11 +47,15 @@ async fn fake_jev(reply: Reply) -> (String, Arc<Mutex<Vec<Seen>>>) {
     let reply = Arc::new(reply);
     tokio::spawn(async move {
         loop {
-            let Ok((mut sock, _)) = listener.accept().await else { return };
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
             let log = log.clone();
             let reply = reply.clone();
             tokio::spawn(async move {
-                let Some(req) = read_request(&mut sock).await else { return };
+                let Some(req) = read_request(&mut sock).await else {
+                    return;
+                };
                 log.lock().unwrap().push(req);
                 match &*reply {
                     Reply::Stall(d) => tokio::time::sleep(*d).await,
@@ -100,7 +107,11 @@ async fn read_request(sock: &mut tokio::net::TcpStream) -> Option<Seen> {
         buf.extend_from_slice(&tmp[..n]);
     }
     let body = serde_json::from_slice(&buf[head_end..head_end + len]).unwrap_or(Value::Null);
-    Some(Seen { request_line, headers, body })
+    Some(Seen {
+        request_line,
+        headers,
+        body,
+    })
 }
 
 fn lunch() -> ChoiceRequest {
@@ -127,10 +138,16 @@ fn sushi_answer() -> Value {
 async fn valid_choice_sends_contract_request_once_and_returns_typed_outcome() {
     let (base, seen) = fake_jev(Reply::Json(200, ok_body(sushi_answer()))).await;
     let req = lunch();
-    let out = client(&base, 2_000).choose(&req, Some("discord-123")).await.unwrap();
+    let out = client(&base, 2_000)
+        .choose(&req, Some("discord-123"))
+        .await
+        .unwrap();
 
     assert_eq!(out.choice, "sushi");
-    assert_eq!(out.probability, 0.7, "probability is P(picked option) from the map");
+    assert_eq!(
+        out.probability, 0.7,
+        "probability is P(picked option) from the map"
+    );
     assert_eq!(out.confidence, 0.55, "confidence is the separate field");
     assert_eq!(out.input_tokens, Some(57));
 
@@ -138,9 +155,15 @@ async fn valid_choice_sends_contract_request_once_and_returns_typed_outcome() {
     assert_eq!(seen.len(), 1, "exactly one call to Jev");
     let r = &seen[0];
     assert_eq!(r.request_line, "POST /v1/systemone HTTP/1.1");
-    assert_eq!(r.header("authorization"), Some(format!("Bearer {FAKE_KEY}").as_str()));
+    assert_eq!(
+        r.header("authorization"),
+        Some(format!("Bearer {FAKE_KEY}").as_str())
+    );
     assert_eq!(r.header("idempotency-key"), Some("discord-123"));
-    assert!(r.header("content-type").unwrap().starts_with("application/json"));
+    assert!(r
+        .header("content-type")
+        .unwrap()
+        .starts_with("application/json"));
     assert_eq!(
         r.body,
         json!({
@@ -154,7 +177,12 @@ async fn valid_choice_sends_contract_request_once_and_returns_typed_outcome() {
         })
     );
     // Option order is preserved on the wire.
-    let keys: Vec<_> = r.body["questions"]["pick"]["criteria"].as_object().unwrap().keys().cloned().collect();
+    let keys: Vec<_> = r.body["questions"]["pick"]["criteria"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
     assert_eq!(keys, ["pizza", "sushi", "tacos"]);
 
     let text = render::outcome(&req, &out);
@@ -166,7 +194,12 @@ async fn valid_choice_sends_contract_request_once_and_returns_typed_outcome() {
 #[tokio::test]
 async fn context_becomes_state() {
     let (base, seen) = fake_jev(Reply::Json(200, ok_body(sushi_answer()))).await;
-    let req = ChoiceRequest::parse("Where to eat?", "pizza|sushi|tacos", Some("  Two of us are vegetarian. ")).unwrap();
+    let req = ChoiceRequest::parse(
+        "Where to eat?",
+        "pizza|sushi|tacos",
+        Some("  Two of us are vegetarian. "),
+    )
+    .unwrap();
     client(&base, 2_000).choose(&req, None).await.unwrap();
     let seen = seen.lock().unwrap();
     assert_eq!(seen[0].body["state"], "Two of us are vegetarian.");
@@ -183,9 +216,15 @@ fn empty_and_duplicate_options_are_refused_locally() {
     assert_eq!(p("pizza"), Err(InputError::TooFewOptions(1)));
     assert_eq!(p("pizza, , sushi"), Err(InputError::EmptyOption(2)));
     assert_eq!(p(",pizza,sushi"), Err(InputError::EmptyOption(1)));
-    assert_eq!(p("pizza, sushi, Pizza"), Err(InputError::DuplicateOption("Pizza".into())));
+    assert_eq!(
+        p("pizza, sushi, Pizza"),
+        Err(InputError::DuplicateOption("Pizza".into()))
+    );
     assert_eq!(p("a|a"), Err(InputError::DuplicateOption("a".into())));
-    assert_eq!(ChoiceRequest::parse("   ", "a, b", None), Err(InputError::EmptyQuestion));
+    assert_eq!(
+        ChoiceRequest::parse("   ", "a, b", None),
+        Err(InputError::EmptyQuestion)
+    );
     // One trailing separator is tolerated.
     assert_eq!(p("pizza, sushi,").unwrap().options, ["pizza", "sushi"]);
 }
@@ -193,16 +232,33 @@ fn empty_and_duplicate_options_are_refused_locally() {
 #[test]
 fn input_bounds_follow_jev_limits() {
     let many: Vec<String> = (1..=21).map(|i| format!("o{i}")).collect();
-    assert_eq!(ChoiceRequest::parse("q", &many.join(","), None), Err(InputError::TooManyOptions(21)));
+    assert_eq!(
+        ChoiceRequest::parse("q", &many.join(","), None),
+        Err(InputError::TooManyOptions(21))
+    );
     assert!(ChoiceRequest::parse("q", &many[..20].join(","), None).is_ok());
     let long_q = "x".repeat(1_801);
-    assert_eq!(ChoiceRequest::parse(&long_q, "a,b", None), Err(InputError::QuestionTooLong(1_801)));
+    assert_eq!(
+        ChoiceRequest::parse(&long_q, "a,b", None),
+        Err(InputError::QuestionTooLong(1_801))
+    );
     let long_opt = format!("a,{}", "y".repeat(101));
-    assert_eq!(ChoiceRequest::parse("q", &long_opt, None), Err(InputError::OptionTooLong(2)));
+    assert_eq!(
+        ChoiceRequest::parse("q", &long_opt, None),
+        Err(InputError::OptionTooLong(2))
+    );
     let long_ctx = "z".repeat(8_000); // 8,002 once JSON-quoted
-    assert_eq!(ChoiceRequest::parse("q", "a,b", Some(&long_ctx)), Err(InputError::StateTooLong(8_002)));
-    let wide: Vec<String> = (0..20).map(|i| format!("{i:02}{}", "w".repeat(60))).collect();
-    assert!(matches!(ChoiceRequest::parse("q", &wide.join(","), None), Err(InputError::CriteriaTooLong(_))));
+    assert_eq!(
+        ChoiceRequest::parse("q", "a,b", Some(&long_ctx)),
+        Err(InputError::StateTooLong(8_002))
+    );
+    let wide: Vec<String> = (0..20)
+        .map(|i| format!("{i:02}{}", "w".repeat(60)))
+        .collect();
+    assert!(matches!(
+        ChoiceRequest::parse("q", &wide.join(","), None),
+        Err(InputError::CriteriaTooLong(_))
+    ));
 }
 
 #[tokio::test]
@@ -212,7 +268,9 @@ async fn refused_input_makes_no_http_call() {
     let (_base, seen) = fake_jev(Reply::Json(200, ok_body(sushi_answer()))).await;
     assert!(ChoiceRequest::parse("q", "a, a", None).is_err());
     assert!(seen.lock().unwrap().is_empty());
-    assert!(render::input_error(&InputError::DuplicateOption("a".into())).contains("more than once"));
+    assert!(
+        render::input_error(&InputError::DuplicateOption("a".into())).contains("more than once")
+    );
 }
 
 // ---- timeout ------------------------------------------------------------
@@ -223,7 +281,11 @@ async fn timeout_is_bounded_and_reported() {
     let started = std::time::Instant::now();
     let err = client(&base, 300).choose(&lunch(), None).await.unwrap_err();
     assert_eq!(err, JevError::Timeout);
-    assert!(started.elapsed() < Duration::from_secs(3), "took {:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "took {:?}",
+        started.elapsed()
+    );
     assert_eq!(seen.lock().unwrap().len(), 1, "no retry after timeout");
     assert!(render::jev_error(&err).contains("did not answer in time"));
 }
@@ -241,23 +303,43 @@ async fn non_2xx_surfaces_status_and_error_envelope_without_retry() {
     ] {
         let body = json!({"error": {"type": kind, "message": "nope"}}).to_string();
         let (base, seen) = fake_jev(Reply::Json(status, body)).await;
-        let err = client(&base, 2_000).choose(&lunch(), None).await.unwrap_err();
+        let err = client(&base, 2_000)
+            .choose(&lunch(), None)
+            .await
+            .unwrap_err();
         assert_eq!(
             err,
-            JevError::Status { status, kind: Some(kind.into()), message: Some("nope".into()) },
+            JevError::Status {
+                status,
+                kind: Some(kind.into()),
+                message: Some("nope".into())
+            },
             "status {status}"
         );
         assert_eq!(seen.lock().unwrap().len(), 1, "no retry on {status}");
         let text = render::jev_error(&err);
-        assert!(text.contains(&status.to_string()) && !text.contains(FAKE_KEY), "{text}");
+        assert!(
+            text.contains(&status.to_string()) && !text.contains(FAKE_KEY),
+            "{text}"
+        );
     }
 }
 
 #[tokio::test]
 async fn non_2xx_without_envelope_still_reports_status() {
     let (base, _) = fake_jev(Reply::Json(503, "<html>down</html>".into())).await;
-    let err = client(&base, 2_000).choose(&lunch(), None).await.unwrap_err();
-    assert_eq!(err, JevError::Status { status: 503, kind: None, message: None });
+    let err = client(&base, 2_000)
+        .choose(&lunch(), None)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err,
+        JevError::Status {
+            status: 503,
+            kind: None,
+            message: None
+        }
+    );
 }
 
 // ---- malformed typed response ------------------------------------------
@@ -268,33 +350,91 @@ async fn malformed_typed_responses_are_rejected() {
     // pins WHICH check fired, since several checks overlap.
     let cases: Vec<(&str, String, &str)> = vec![
         ("not json", "this is not json".into(), "not a Jev response"),
-        ("no answers", json!({"model": "jev-latest"}).to_string(), "not a Jev response"),
-        ("wrong question name", json!({"answers": {"route": sushi_answer()}}).to_string(), "no answer for \"pick\""),
-        ("wrong type", ok_body(json!({"type": "score", "score": 1.4, "confidence": 0.8})), "expected \"choice\""),
-        ("missing choice", ok_body(json!({"type": "choice", "probabilities": {"sushi": 0.7}, "confidence": 0.5})), "no choice"),
-        ("choice not offered", ok_body(json!({"type": "choice", "choice": "ramen",
-            "probabilities": {"sushi": 0.3, "ramen": 0.7}, "confidence": 0.5})), "not one of the options"),
-        ("choice as number", ok_body(json!({"type": "choice", "choice": 2,
-            "probabilities": {"sushi": 0.7}, "confidence": 0.5})), "not a Jev response"),
-        ("missing probabilities", ok_body(json!({"type": "choice", "choice": "sushi", "confidence": 0.5})), "no probabilities"),
-        ("no probability for choice", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"pizza": 0.7}, "confidence": 0.5})), "no probability for picked option"),
-        ("unknown option in probabilities", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": 0.7, "ramen": 0.3}, "confidence": 0.5})), "unknown option \"ramen\""),
-        ("probability out of range", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": 1.7}, "confidence": 0.5})), "probability 1.7 is outside"),
-        ("probability as string", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": "0.7"}, "confidence": 0.5})), "not a Jev response"),
-        ("missing confidence", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": 0.7}})), "no confidence"),
-        ("negative confidence", ok_body(json!({"type": "choice", "choice": "sushi",
-            "probabilities": {"sushi": 0.7}, "confidence": -0.1})), "confidence -0.1 is outside"),
+        (
+            "no answers",
+            json!({"model": "jev-latest"}).to_string(),
+            "not a Jev response",
+        ),
+        (
+            "wrong question name",
+            json!({"answers": {"route": sushi_answer()}}).to_string(),
+            "no answer for \"pick\"",
+        ),
+        (
+            "wrong type",
+            ok_body(json!({"type": "score", "score": 1.4, "confidence": 0.8})),
+            "expected \"choice\"",
+        ),
+        (
+            "missing choice",
+            ok_body(json!({"type": "choice", "probabilities": {"sushi": 0.7}, "confidence": 0.5})),
+            "no choice",
+        ),
+        (
+            "choice not offered",
+            ok_body(json!({"type": "choice", "choice": "ramen",
+            "probabilities": {"sushi": 0.3, "ramen": 0.7}, "confidence": 0.5})),
+            "not one of the options",
+        ),
+        (
+            "choice as number",
+            ok_body(json!({"type": "choice", "choice": 2,
+            "probabilities": {"sushi": 0.7}, "confidence": 0.5})),
+            "not a Jev response",
+        ),
+        (
+            "missing probabilities",
+            ok_body(json!({"type": "choice", "choice": "sushi", "confidence": 0.5})),
+            "no probabilities",
+        ),
+        (
+            "no probability for choice",
+            ok_body(json!({"type": "choice", "choice": "sushi",
+            "probabilities": {"pizza": 0.7}, "confidence": 0.5})),
+            "no probability for picked option",
+        ),
+        (
+            "unknown option in probabilities",
+            ok_body(json!({"type": "choice", "choice": "sushi",
+            "probabilities": {"sushi": 0.7, "ramen": 0.3}, "confidence": 0.5})),
+            "unknown option \"ramen\"",
+        ),
+        (
+            "probability out of range",
+            ok_body(json!({"type": "choice", "choice": "sushi",
+            "probabilities": {"sushi": 1.7}, "confidence": 0.5})),
+            "probability 1.7 is outside",
+        ),
+        (
+            "probability as string",
+            ok_body(json!({"type": "choice", "choice": "sushi",
+            "probabilities": {"sushi": "0.7"}, "confidence": 0.5})),
+            "not a Jev response",
+        ),
+        (
+            "missing confidence",
+            ok_body(json!({"type": "choice", "choice": "sushi",
+            "probabilities": {"sushi": 0.7}})),
+            "no confidence",
+        ),
+        (
+            "negative confidence",
+            ok_body(json!({"type": "choice", "choice": "sushi",
+            "probabilities": {"sushi": 0.7}, "confidence": -0.1})),
+            "confidence -0.1 is outside",
+        ),
     ];
     for (name, body, reason) in cases {
         let (base, _) = fake_jev(Reply::Json(200, body)).await;
-        let err = client(&base, 2_000).choose(&lunch(), None).await.unwrap_err();
+        let err = client(&base, 2_000)
+            .choose(&lunch(), None)
+            .await
+            .unwrap_err();
         match &err {
-            JevError::Malformed(why) => assert!(why.contains(reason), "{name}: reason {why:?} lacks {reason:?}"),
+            JevError::Malformed(why) => assert!(
+                why.contains(reason),
+                "{name}: reason {why:?} lacks {reason:?}"
+            ),
             other => panic!("{name}: got {other:?}"),
         }
     }
@@ -302,17 +442,31 @@ async fn malformed_typed_responses_are_rejected() {
 
 #[tokio::test]
 async fn oversized_response_is_refused() {
-    let huge = format!("{{\"pad\":\"{}\"}}", "x".repeat(choice::jev::MAX_RESPONSE_BYTES + 10));
+    let huge = format!(
+        "{{\"pad\":\"{}\"}}",
+        "x".repeat(choice::jev::MAX_RESPONSE_BYTES + 10)
+    );
     let (base, _) = fake_jev(Reply::Json(200, huge)).await;
-    let err = client(&base, 2_000).choose(&lunch(), None).await.unwrap_err();
+    let err = client(&base, 2_000)
+        .choose(&lunch(), None)
+        .await
+        .unwrap_err();
     assert_eq!(err, JevError::TooLarge);
 }
 
 #[tokio::test]
 async fn unreachable_server_is_a_transport_error() {
     // Bind then drop to get a port nothing listens on.
-    let port = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
-    let err = client(&format!("http://127.0.0.1:{port}"), 2_000).choose(&lunch(), None).await.unwrap_err();
+    let port = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let err = client(&format!("http://127.0.0.1:{port}"), 2_000)
+        .choose(&lunch(), None)
+        .await
+        .unwrap_err();
     assert!(matches!(err, JevError::Transport(_)), "{err:?}");
 }
 

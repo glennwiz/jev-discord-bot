@@ -12,9 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serenity::all::{
-    CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption,
-    CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse, EventHandler,
-    GatewayIntents, GuildId, Interaction, Ready,
+    CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand,
+    CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage,
+    EditInteractionResponse, EventHandler, GatewayIntents, GuildId, Interaction, Ready,
 };
 use serenity::async_trait;
 use serenity::Client;
@@ -75,67 +75,107 @@ async fn shutdown_signal() {
 }
 
 fn jev_command() -> CreateCommand {
-    let choice = CreateCommandOption::new(CommandOptionType::SubCommand, "choice", "Let Jev pick one of your options")
-        .add_sub_option(
-            CreateCommandOption::new(CommandOptionType::String, "question", "What should be decided?")
-                .required(true)
-                .max_length(choice::input::MAX_QUESTION_CHARS as u16),
+    let choice = CreateCommandOption::new(
+        CommandOptionType::SubCommand,
+        "choice",
+        "Let Jev pick one of your options",
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "question",
+            "What should be decided?",
         )
-        .add_sub_option(
-            CreateCommandOption::new(
-                CommandOptionType::String,
-                "options",
-                "2-20 options, separated by commas (or | if options contain commas)",
-            )
+        .required(true)
+        .max_length(choice::input::MAX_QUESTION_CHARS as u16),
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "options",
+            "2-20 options, separated by commas (or | if options contain commas)",
+        )
+        .required(true)
+        .max_length(choice::input::MAX_CRITERIA_CHARS as u16),
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "context",
+            "Optional background for Jev to weigh",
+        )
+        .required(false)
+        .max_length(4_000),
+    );
+    let score = CreateCommandOption::new(
+        CommandOptionType::SubCommand,
+        "score",
+        "Let Jev place text on your ordered levels",
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "text",
+            "The text Jev should score",
+        )
+        .required(true)
+        .max_length(4_000),
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "question",
+            "What should be measured?",
+        )
+        .required(true)
+        .max_length(score::input::MAX_QUESTION_CHARS as u16),
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "levels",
+            "2-10 levels, lowest first, separated by commas (or | if levels contain commas)",
+        )
+        .required(true)
+        .max_length(score::input::MAX_CRITERIA_CHARS as u16),
+    );
+    let noul = CreateCommandOption::new(
+        CommandOptionType::SubCommand,
+        "noul",
+        "Ask Jev for P(yes) on a yes/no question",
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "text",
+            "The text Jev should judge",
+        )
+        .required(true)
+        .max_length(4_000),
+    )
+    .add_sub_option(
+        CreateCommandOption::new(CommandOptionType::String, "question", "The yes/no question")
             .required(true)
-            .max_length(choice::input::MAX_CRITERIA_CHARS as u16),
+            .max_length(noul::input::MAX_QUESTION_CHARS as u16),
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "yes_means",
+            "Optional: what counts as yes",
         )
-        .add_sub_option(
-            CreateCommandOption::new(CommandOptionType::String, "context", "Optional background for Jev to weigh")
-                .required(false)
-                .max_length(4_000),
-        );
-    let score = CreateCommandOption::new(CommandOptionType::SubCommand, "score", "Let Jev place text on your ordered levels")
-        .add_sub_option(
-            CreateCommandOption::new(CommandOptionType::String, "text", "The text Jev should score")
-                .required(true)
-                .max_length(4_000),
+        .required(false)
+        .max_length(noul::input::MAX_MEANING_CHARS as u16),
+    )
+    .add_sub_option(
+        CreateCommandOption::new(
+            CommandOptionType::String,
+            "no_means",
+            "Optional: what counts as no",
         )
-        .add_sub_option(
-            CreateCommandOption::new(CommandOptionType::String, "question", "What should be measured?")
-                .required(true)
-                .max_length(score::input::MAX_QUESTION_CHARS as u16),
-        )
-        .add_sub_option(
-            CreateCommandOption::new(
-                CommandOptionType::String,
-                "levels",
-                "2-10 levels, lowest first, separated by commas (or | if levels contain commas)",
-            )
-            .required(true)
-            .max_length(score::input::MAX_CRITERIA_CHARS as u16),
-        );
-    let noul = CreateCommandOption::new(CommandOptionType::SubCommand, "noul", "Ask Jev for P(yes) on a yes/no question")
-        .add_sub_option(
-            CreateCommandOption::new(CommandOptionType::String, "text", "The text Jev should judge")
-                .required(true)
-                .max_length(4_000),
-        )
-        .add_sub_option(
-            CreateCommandOption::new(CommandOptionType::String, "question", "The yes/no question")
-                .required(true)
-                .max_length(noul::input::MAX_QUESTION_CHARS as u16),
-        )
-        .add_sub_option(
-            CreateCommandOption::new(CommandOptionType::String, "yes_means", "Optional: what counts as yes")
-                .required(false)
-                .max_length(noul::input::MAX_MEANING_CHARS as u16),
-        )
-        .add_sub_option(
-            CreateCommandOption::new(CommandOptionType::String, "no_means", "Optional: what counts as no")
-                .required(false)
-                .max_length(noul::input::MAX_MEANING_CHARS as u16),
-        );
+        .required(false)
+        .max_length(noul::input::MAX_MEANING_CHARS as u16),
+    );
     CreateCommand::new("jev")
         .description("Ask Jev for a typed decision")
         .add_option(choice)
@@ -149,7 +189,10 @@ fn sub_args(cmd: &CommandInteraction) -> Option<(&str, Vec<(&str, &str)>)> {
     let CommandDataOptionValue::SubCommand(opts) = &sub.value else {
         return None;
     };
-    let strings = opts.iter().filter_map(|o| Some((o.name.as_str(), o.value.as_str()?))).collect();
+    let strings = opts
+        .iter()
+        .filter_map(|o| Some((o.name.as_str(), o.value.as_str()?)))
+        .collect();
     Some((sub.name.as_str(), strings))
 }
 
@@ -157,13 +200,25 @@ fn arg<'a>(args: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
     args.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
 }
 
-async fn reply_private(ctx: &Context, cmd: &CommandInteraction, text: String) -> serenity::Result<()> {
-    let msg = CreateInteractionResponseMessage::new().content(text).ephemeral(true);
-    cmd.create_response(&ctx.http, CreateInteractionResponse::Message(msg)).await
+async fn reply_private(
+    ctx: &Context,
+    cmd: &CommandInteraction,
+    text: String,
+) -> serenity::Result<()> {
+    let msg = CreateInteractionResponseMessage::new()
+        .content(text)
+        .ephemeral(true);
+    cmd.create_response(&ctx.http, CreateInteractionResponse::Message(msg))
+        .await
 }
 
 impl Handler {
-    async fn handle_choice(&self, ctx: &Context, cmd: &CommandInteraction, args: &[(&str, &str)]) -> serenity::Result<()> {
+    async fn handle_choice(
+        &self,
+        ctx: &Context,
+        cmd: &CommandInteraction,
+        args: &[(&str, &str)],
+    ) -> serenity::Result<()> {
         let (Some(question), Some(options)) = (arg(args, "question"), arg(args, "options")) else {
             return Ok(());
         };
@@ -175,7 +230,11 @@ impl Handler {
         // Acknowledge inside Discord's 3 s window before the network call.
         cmd.defer(&ctx.http).await?;
         let started = std::time::Instant::now();
-        let text = match self.jev.choose(&req, Some(&format!("discord-{}", cmd.id))).await {
+        let text = match self
+            .jev
+            .choose(&req, Some(&format!("discord-{}", cmd.id)))
+            .await
+        {
             Ok(out) => {
                 eprintln!(
                     "choice ok: interaction={} options={} choice_index={:?} p={:.3} confidence={:.3} input_tokens={:?} ms={}",
@@ -190,17 +249,31 @@ impl Handler {
                 render::outcome(&req, &out)
             }
             Err(e) => {
-                eprintln!("choice failed: interaction={} error={} ms={}", cmd.id, e, started.elapsed().as_millis());
+                eprintln!(
+                    "choice failed: interaction={} error={} ms={}",
+                    cmd.id,
+                    e,
+                    started.elapsed().as_millis()
+                );
                 render::jev_error(&e)
             }
         };
-        cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(text)).await?;
+        cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(text))
+            .await?;
         Ok(())
     }
 
-    async fn handle_score(&self, ctx: &Context, cmd: &CommandInteraction, args: &[(&str, &str)]) -> serenity::Result<()> {
-        let (Some(text), Some(question), Some(levels)) = (arg(args, "text"), arg(args, "question"), arg(args, "levels"))
-        else {
+    async fn handle_score(
+        &self,
+        ctx: &Context,
+        cmd: &CommandInteraction,
+        args: &[(&str, &str)],
+    ) -> serenity::Result<()> {
+        let (Some(text), Some(question), Some(levels)) = (
+            arg(args, "text"),
+            arg(args, "question"),
+            arg(args, "levels"),
+        ) else {
             return Ok(());
         };
         // Bad input never reaches Jev: answer privately and stop.
@@ -211,7 +284,11 @@ impl Handler {
         // Acknowledge inside Discord's 3 s window before the network call.
         cmd.defer(&ctx.http).await?;
         let started = std::time::Instant::now();
-        let reply = match self.score.score(&req, Some(&format!("discord-{}", cmd.id))).await {
+        let reply = match self
+            .score
+            .score(&req, Some(&format!("discord-{}", cmd.id)))
+            .await
+        {
             Ok(out) => {
                 eprintln!(
                     "score ok: interaction={} levels={} score={} confidence={:.3} input_tokens={:?} ms={}",
@@ -225,27 +302,47 @@ impl Handler {
                 score::render::outcome(&req, &out)
             }
             Err(e) => {
-                eprintln!("score failed: interaction={} error={} ms={}", cmd.id, e, started.elapsed().as_millis());
+                eprintln!(
+                    "score failed: interaction={} error={} ms={}",
+                    cmd.id,
+                    e,
+                    started.elapsed().as_millis()
+                );
                 score::render::jev_error(&e)
             }
         };
-        cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply)).await?;
+        cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply))
+            .await?;
         Ok(())
     }
 
-    async fn handle_noul(&self, ctx: &Context, cmd: &CommandInteraction, args: &[(&str, &str)]) -> serenity::Result<()> {
+    async fn handle_noul(
+        &self,
+        ctx: &Context,
+        cmd: &CommandInteraction,
+        args: &[(&str, &str)],
+    ) -> serenity::Result<()> {
         let (Some(text), Some(question)) = (arg(args, "text"), arg(args, "question")) else {
             return Ok(());
         };
         // Bad input never reaches Jev: answer privately and stop.
-        let req = match NoulRequest::parse(text, question, arg(args, "yes_means"), arg(args, "no_means")) {
+        let req = match NoulRequest::parse(
+            text,
+            question,
+            arg(args, "yes_means"),
+            arg(args, "no_means"),
+        ) {
             Ok(r) => r,
             Err(e) => return reply_private(ctx, cmd, noul::render::input_error(&e)).await,
         };
         // Acknowledge inside Discord's 3 s window before the network call.
         cmd.defer(&ctx.http).await?;
         let started = std::time::Instant::now();
-        let reply = match self.noul.ask(&req, Some(&format!("discord-{}", cmd.id))).await {
+        let reply = match self
+            .noul
+            .ask(&req, Some(&format!("discord-{}", cmd.id)))
+            .await
+        {
             Ok(out) => {
                 eprintln!(
                     "noul ok: interaction={} criteria={} p_yes={} input_tokens={:?} ms={}",
@@ -258,11 +355,17 @@ impl Handler {
                 noul::render::outcome(&req, &out)
             }
             Err(e) => {
-                eprintln!("noul failed: interaction={} error={} ms={}", cmd.id, e, started.elapsed().as_millis());
+                eprintln!(
+                    "noul failed: interaction={} error={} ms={}",
+                    cmd.id,
+                    e,
+                    started.elapsed().as_millis()
+                );
                 noul::render::jev_error(&e)
             }
         };
-        cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply)).await?;
+        cmd.edit_response(&ctx.http, EditInteractionResponse::new().content(reply))
+            .await?;
         Ok(())
     }
 }
@@ -271,7 +374,11 @@ impl Handler {
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         eprintln!("connected as {} (guild {})", ready.user.name, self.guild);
-        match self.guild.set_commands(&ctx.http, vec![jev_command()]).await {
+        match self
+            .guild
+            .set_commands(&ctx.http, vec![jev_command()])
+            .await
+        {
             Ok(cmds) => eprintln!("registered {} guild command(s)", cmds.len()),
             Err(e) => eprintln!("command registration failed: {e}"),
         }
@@ -310,20 +417,29 @@ async fn main() {
         }
     };
     eprintln!("config: {cfg:?}");
-    let jev = JevClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout).unwrap_or_else(|e| {
-        eprintln!("jev client error: {e}");
-        std::process::exit(2);
-    });
-    let score = ScoreClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout).unwrap_or_else(|e| {
-        eprintln!("jev client error: {e}");
-        std::process::exit(2);
-    });
-    let noul = NoulClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout).unwrap_or_else(|e| {
-        eprintln!("jev client error: {e}");
-        std::process::exit(2);
-    });
+    let jev =
+        JevClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout).unwrap_or_else(|e| {
+            eprintln!("jev client error: {e}");
+            std::process::exit(2);
+        });
+    let score = ScoreClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout)
+        .unwrap_or_else(|e| {
+            eprintln!("jev client error: {e}");
+            std::process::exit(2);
+        });
+    let noul = NoulClient::new(&cfg.jev_base_url, &cfg.jev_api_key, cfg.jev_timeout)
+        .unwrap_or_else(|e| {
+            eprintln!("jev client error: {e}");
+            std::process::exit(2);
+        });
     let in_flight = Arc::new(AtomicUsize::new(0));
-    let handler = Handler { guild: GuildId::new(cfg.guild_id), jev, score, noul, in_flight: in_flight.clone() };
+    let handler = Handler {
+        guild: GuildId::new(cfg.guild_id),
+        jev,
+        score,
+        noul,
+        in_flight: in_flight.clone(),
+    };
     // Slash commands arrive without privileged or message intents.
     let mut client = Client::builder(&cfg.discord_token, GatewayIntents::empty())
         .event_handler(handler)
@@ -350,6 +466,8 @@ async fn main() {
     }
     match in_flight.load(Ordering::SeqCst) {
         0 => eprintln!("shutdown: clean"),
-        n => eprintln!("shutdown: {n} interaction(s) still in flight after {DRAIN_TIMEOUT:?}; exiting"),
+        n => eprintln!(
+            "shutdown: {n} interaction(s) still in flight after {DRAIN_TIMEOUT:?}; exiting"
+        ),
     }
 }

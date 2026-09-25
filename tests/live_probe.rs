@@ -21,12 +21,24 @@ mod score;
 
 use std::time::Duration;
 
-async fn call(http: &reqwest::Client, base: &str, key: &str, label: &str, body: &serde_json::Value) -> Option<Vec<u8>> {
-    println!("\n=== {label}: request body\n{}", serde_json::to_string_pretty(body).unwrap());
+async fn call(
+    http: &reqwest::Client,
+    base: &str,
+    key: &str,
+    label: &str,
+    body: &serde_json::Value,
+) -> Option<Vec<u8>> {
+    println!(
+        "\n=== {label}: request body\n{}",
+        serde_json::to_string_pretty(body).unwrap()
+    );
     let resp = http
         .post(format!("{base}/v1/systemone"))
         .bearer_auth(key)
-        .header("Idempotency-Key", format!("jev-probe-{label}-{}", std::process::id()))
+        .header(
+            "Idempotency-Key",
+            format!("jev-probe-{label}-{}", std::process::id()),
+        )
         .json(body)
         .send()
         .await;
@@ -44,7 +56,10 @@ async fn call(http: &reqwest::Client, base: &str, key: &str, label: &str, body: 
         println!("=== {label}: stopping - key refused or out of credit; no further calls");
         return None;
     }
-    println!("=== {label}: response body\n{}", String::from_utf8_lossy(&bytes));
+    println!(
+        "=== {label}: response body\n{}",
+        String::from_utf8_lossy(&bytes)
+    );
     status.is_success().then_some(bytes)
 }
 
@@ -55,13 +70,38 @@ async fn live_probe_one_call_per_feature() {
     let key = std::env::var("JEVMODEL_API_KEY").expect("JEVMODEL_API_KEY not set");
     let key = key.trim();
     let base = std::env::var("JEV_BASE_URL").unwrap_or_else(|_| "https://jevmodel.org".into());
-    println!("key: {} chars, starts with sk-: {}", key.len(), key.starts_with("sk-"));
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap();
+    println!(
+        "key: {} chars, starts with sk-: {}",
+        key.len(),
+        key.starts_with("sk-")
+    );
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap();
 
     // 1. choice
-    let req = choice::ChoiceRequest::parse("Where should the team eat?", "pizza, sushi, tacos", Some("Two of us are vegetarian and we have 30 minutes.")).unwrap();
-    let Some(body) = call(&http, &base, key, "choice", &choice::JevClient::request_body(&req)).await else { return };
-    println!("=== choice: parsed -> {:?}", choice::jev::parse_choice(&body, &req));
+    let req = choice::ChoiceRequest::parse(
+        "Where should the team eat?",
+        "pizza, sushi, tacos",
+        Some("Two of us are vegetarian and we have 30 minutes."),
+    )
+    .unwrap();
+    let Some(body) = call(
+        &http,
+        &base,
+        key,
+        "choice",
+        &choice::JevClient::request_body(&req),
+    )
+    .await
+    else {
+        return;
+    };
+    println!(
+        "=== choice: parsed -> {:?}",
+        choice::jev::parse_choice(&body, &req)
+    );
 
     // 2. score - a clearly top-level state, so the returned number shows
     // the base: ~3 means 0-based (0-3), ~4 means 1-based (1-4).
@@ -71,11 +111,41 @@ async fn live_probe_one_call_per_feature() {
         "routine, soon, urgent, critical",
     )
     .unwrap();
-    let Some(body) = call(&http, &base, key, "score", &score::ScoreClient::request_body(&req)).await else { return };
-    println!("=== score: parsed with LOWEST_LEVEL_SCORE={} -> {:?}", score::input::LOWEST_LEVEL_SCORE, score::jev::parse_score(&body, &req));
+    let Some(body) = call(
+        &http,
+        &base,
+        key,
+        "score",
+        &score::ScoreClient::request_body(&req),
+    )
+    .await
+    else {
+        return;
+    };
+    println!(
+        "=== score: parsed with LOWEST_LEVEL_SCORE={} -> {:?}",
+        score::input::LOWEST_LEVEL_SCORE,
+        score::jev::parse_score(&body, &req)
+    );
 
     // 3. noul
-    let req = noul::NoulRequest::parse("The customer was billed twice and wants a refund today.", "Does this need a human right now?", None, None).unwrap();
-    let Some(body) = call(&http, &base, key, "noul", &noul::NoulClient::request_body(&req)).await else { return };
+    let req = noul::NoulRequest::parse(
+        "The customer was billed twice and wants a refund today.",
+        "Does this need a human right now?",
+        None,
+        None,
+    )
+    .unwrap();
+    let Some(body) = call(
+        &http,
+        &base,
+        key,
+        "noul",
+        &noul::NoulClient::request_body(&req),
+    )
+    .await
+    else {
+        return;
+    };
     println!("=== noul: parsed -> {:?}", noul::jev::parse_noul(&body));
 }

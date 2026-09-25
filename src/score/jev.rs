@@ -52,7 +52,11 @@ pub enum ScoreError {
     /// No complete answer within the configured timeout.
     Timeout,
     /// Non-2xx; `kind`/`message` come from Jev's error envelope when present.
-    Status { status: u16, kind: Option<String>, message: Option<String> },
+    Status {
+        status: u16,
+        kind: Option<String>,
+        message: Option<String>,
+    },
     /// 2xx whose body does not match the typed score contract.
     Malformed(String),
     /// Body larger than [`MAX_RESPONSE_BYTES`].
@@ -65,7 +69,11 @@ impl fmt::Display for ScoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ScoreError::Timeout => write!(f, "Jev did not answer in time."),
-            ScoreError::Status { status, kind, message } => {
+            ScoreError::Status {
+                status,
+                kind,
+                message,
+            } => {
                 write!(f, "Jev returned HTTP {status}")?;
                 if let Some(k) = kind {
                     write!(f, " ({k})")?;
@@ -131,7 +139,11 @@ impl ScoreClient {
     }
 
     /// Send one request (no retries) and validate the typed answer.
-    pub async fn score(&self, req: &ScoreRequest, idempotency_key: Option<&str>) -> Result<ScoreOutcome, ScoreError> {
+    pub async fn score(
+        &self,
+        req: &ScoreRequest,
+        idempotency_key: Option<&str>,
+    ) -> Result<ScoreOutcome, ScoreError> {
         let mut builder = self
             .http
             .post(&self.endpoint)
@@ -154,7 +166,9 @@ impl ScoreClient {
         }
 
         if !status.is_success() {
-            let envelope = serde_json::from_slice::<ErrorEnvelope>(&body).ok().map(|e| e.error);
+            let envelope = serde_json::from_slice::<ErrorEnvelope>(&body)
+                .ok()
+                .map(|e| e.error);
             return Err(ScoreError::Status {
                 status: status.as_u16(),
                 kind: envelope.as_ref().and_then(|e| e.kind.clone()),
@@ -167,23 +181,34 @@ impl ScoreClient {
 
 /// Validate a 200 body against the score contract for `req`.
 pub fn parse_score(body: &[u8], req: &ScoreRequest) -> Result<ScoreOutcome, ScoreError> {
-    let wire: WireResponse =
-        serde_json::from_slice(body).map_err(|e| ScoreError::Malformed(format!("not a Jev response ({e})")))?;
+    let wire: WireResponse = serde_json::from_slice(body)
+        .map_err(|e| ScoreError::Malformed(format!("not a Jev response ({e})")))?;
     let answer = wire
         .answers
         .get(QUESTION_NAME)
         .ok_or_else(|| ScoreError::Malformed(format!("no answer for \"{QUESTION_NAME}\"")))?;
     if answer.kind.as_deref() != Some("score") {
-        return Err(ScoreError::Malformed(format!("answer type is {:?}, expected \"score\"", answer.kind)));
+        return Err(ScoreError::Malformed(format!(
+            "answer type is {:?}, expected \"score\"",
+            answer.kind
+        )));
     }
     let (min, max) = (req.min_score(), req.max_score());
-    let score = answer.score.ok_or_else(|| ScoreError::Malformed("no score".into()))?;
+    let score = answer
+        .score
+        .ok_or_else(|| ScoreError::Malformed("no score".into()))?;
     if !(score.is_finite() && (min as f64..=max as f64).contains(&score)) {
-        return Err(ScoreError::Malformed(format!("score {score} is outside {min}-{max}")));
+        return Err(ScoreError::Malformed(format!(
+            "score {score} is outside {min}-{max}"
+        )));
     }
-    let confidence = answer.confidence.ok_or_else(|| ScoreError::Malformed("no confidence".into()))?;
+    let confidence = answer
+        .confidence
+        .ok_or_else(|| ScoreError::Malformed("no confidence".into()))?;
     if !(confidence.is_finite() && (0.0..=1.0).contains(&confidence)) {
-        return Err(ScoreError::Malformed(format!("confidence {confidence} is outside [0, 1]")));
+        return Err(ScoreError::Malformed(format!(
+            "confidence {confidence} is outside [0, 1]"
+        )));
     }
 
     let mut level_probabilities = Vec::new();
@@ -192,9 +217,13 @@ pub fn parse_score(body: &[u8], req: &ScoreRequest) -> Result<ScoreOutcome, Scor
             .parse()
             .ok()
             .filter(|l| (min..=max).contains(l))
-            .ok_or_else(|| ScoreError::Malformed(format!("probability for unknown level \"{key}\"")))?;
+            .ok_or_else(|| {
+                ScoreError::Malformed(format!("probability for unknown level \"{key}\""))
+            })?;
         if !(p.is_finite() && (0.0..=1.0).contains(p)) {
-            return Err(ScoreError::Malformed(format!("level {level} probability {p} is outside [0, 1]")));
+            return Err(ScoreError::Malformed(format!(
+                "level {level} probability {p} is outside [0, 1]"
+            )));
         }
         level_probabilities.push((level, *p));
     }

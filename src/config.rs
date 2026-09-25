@@ -31,7 +31,10 @@ impl Config {
     pub fn from_env() -> Result<Self, String> {
         let _ = dotenvy::dotenv();
         let timeout_secs: u64 = optional("JEV_TIMEOUT_SECS")
-            .map(|v| v.parse().map_err(|_| "JEV_TIMEOUT_SECS must be a whole number of seconds".to_string()))
+            .map(|v| {
+                v.parse()
+                    .map_err(|_| "JEV_TIMEOUT_SECS must be a whole number of seconds".to_string())
+            })
             .transpose()?
             .unwrap_or(20);
         if !(1..=60).contains(&timeout_secs) {
@@ -56,5 +59,8 @@ fn required(name: &str) -> Result<String, String> {
 }
 
 fn optional(name: &str) -> Option<String> {
-    std::env::var(name).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
