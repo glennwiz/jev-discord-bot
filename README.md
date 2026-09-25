@@ -166,6 +166,12 @@ One example per command, as typed in Discord:
 /jev noul text:Billed twice, wants a refund today. question:Does this need a human right now?
 ```
 
+These are the option names the bot registers (checked against `jev_command()`
+in `src/main.rs`). A real run from the live gate (2026-09-26, Glenn, test
+guild): `/jev choice` with `question:humans will get too Alpha centauri the next 250years`
+and `options:Yay, Nay` replied **Jev picks:** Nay, probability of this option
+82.0%, Jev confidence 64.0% - one TypeSafe call, 367 ms.
+
 ### ArchBlackMage test box
 
 Arch Linux x86_64, kernel 7.1.9-arch1-2; Rust user-local via `rustup` 1.29.1
@@ -205,7 +211,9 @@ Either path gives a binary for `aarch64-unknown-linux-gnu`.
   Plain `cargo build --target aarch64-...` fails without an
   `aarch64-linux-gnu-gcc`, because `ring` (TLS) compiles C; zig supplies
   that. The `.2.36` suffix pins glibc 2.36 (Debian 12 / Raspberry Pi OS
-  bookworm) so the binary does not need a newer glibc than the Pi has.
+  bookworm) so the binary does not need a newer glibc than the Pi has;
+  the built binary's highest symbol version is `GLIBC_2.34`
+  (`objdump -T ... | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1`).
 
 **Left for JEV-05 (on the device):** run the binary on the Pi itself
 (glibc/loader match, TLS to Discord and TypeSafe, memory under
