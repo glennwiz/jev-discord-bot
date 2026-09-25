@@ -17,7 +17,8 @@ use serenity::all::{
     EditInteractionResponse, EventHandler, GatewayIntents, GuildId, Interaction, Ready,
 };
 use serenity::async_trait;
-use serenity::Client;
+use serenity::http::HttpBuilder;
+use serenity::client::ClientBuilder;
 
 use choice::{render, ChoiceRequest, JevClient};
 use config::Config;
@@ -494,7 +495,12 @@ async fn main() {
         in_flight: in_flight.clone(),
     };
     // Slash commands arrive without privileged or message intents.
-    let mut client = Client::builder(&cfg.discord_token, GatewayIntents::empty())
+    let mut http = HttpBuilder::new(&cfg.discord_token);
+    if let Some(proxy) = &cfg.discord_api_proxy {
+        eprintln!("WARN: DISCORD_API_PROXY is set: Discord HTTP goes to {proxy} (test seam, not for production)");
+        http = http.proxy(proxy).ratelimiter_disabled(true);
+    }
+    let mut client = ClientBuilder::new_with_http(http.build(), GatewayIntents::empty())
         .event_handler(handler)
         .await
         .unwrap_or_else(|e| {
