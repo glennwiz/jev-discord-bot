@@ -1,7 +1,8 @@
 # jev-discord-bot
 
 Discord bot that asks [Jev](https://jevmodel.org) (TypeSafe's System One
-decision model, via jevmodel.org) typed questions. Slice JEV-01: `/jev choice`.
+decision model, via jevmodel.org) typed questions. Slices JEV-01 `/jev choice`
+and JEV-02 `/jev score`.
 
 ```
 /jev choice question:<what to decide> options:<a, b, c> [context:<background>]
@@ -20,6 +21,23 @@ Probability of this option: 70.0% · Jev confidence: 55.0%
 Bad input (fewer than 2 or more than 20 options, blank or duplicate options,
 over-long text) is answered privately and never reaches Jev.
 
+```
+/jev score text:<what to score> question:<what to measure> levels:<lowest, ..., highest>
+```
+
+Same flow, one `score` question. The reply shows the score exactly as Jev
+sent it (never rounded to a level), where it falls between levels, the ordered
+legend numbered like the scale, and Jev's confidence separately:
+
+```
+**Jev score:** 1.4 on 0-3 (between soon and urgent)
+**Levels:** `0` routine · `1` soon · `2` urgent · `3` critical
+Jev confidence: 88.0%
+```
+
+Levels must be 2-10, non-blank, distinct (case-insensitive), each at most
+100 characters.
+
 ## Layout
 
 | Path | Role |
@@ -28,6 +46,8 @@ over-long text) is answered privately and never reaches Jev.
 | `src/choice/jev.rs` | The single bounded HTTP call and typed-answer validation |
 | `src/choice/render.rs` | Discord reply text |
 | `src/main.rs` | Gateway glue: guild command registration, defer, edit |
+| `src/score/input.rs`, `jev.rs`, `render.rs` | The same three roles for `/jev score`; shares no code with `choice/` |
+| `tests/score_fake_jev.rs`, `tests/common/` | Offline score tests and their fake Jev server |
 | `src/config.rs` | Environment configuration (secrets redacted in `Debug`) |
 | `tests/choice_fake_jev.rs` | Offline tests against a fake Jev HTTP server on 127.0.0.1 |
 
@@ -47,6 +67,15 @@ live unauthenticated probe, which returned `401` with
   402 `insufficient_credits`, 422 `invalid_request_error`, 429
   `rate_limit_error`, 502 `upstream_error`. None are billed. The bot does not
   retry; it reports the status to the user.
+
+Score (`src/score/jev.rs`): request `{"type":"score","instructions":..,"criteria":["<lowest>",..,"<highest>"]}`
+(2-10 levels); 200 answer `{"type":"score","score":1.4,"confidence":0.88}`, plus
+optional `probabilities` keyed by level index and an optional `legend`, both
+read by the jevmodel.org playground's renderer. **Scale base is the open
+point:** the playground labels a result "score {s} on 0-{max}" and positions
+it at `score / (n-1)`, so the bot treats the scale as 0-based (`0..=n-1`) and
+rejects anything outside it. The docs' illustrative use-case cards disagree
+(2.8 on a 3-level rubric). The first live score call settles it.
 
 Not verifiable without a key: whether option keys with spaces/punctuation are
 accepted (docs put no rule on criteria keys) and the real answer values. The
@@ -77,7 +106,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 cd ~/dev/jev-discord-bot
 export PATH=$HOME/.cargo/bin:$PATH CARGO_BUILD_JOBS=2
 cargo fetch                       # the only step that needs the internet
-cargo test --offline              # 12 tests, no Discord / internet / keys
+cargo test --offline              # 12 choice + 10 score tests, no Discord / internet / keys
 # proof of "offline": no network namespace except loopback
 unshare -rn sh -c 'ip link set lo up; cargo test --offline'
 cargo build --release --offline
@@ -91,7 +120,8 @@ cargo build --release --offline
 2. On the box: `cp .env.example .env && chmod 600 .env`, then fill in
    `DISCORD_TOKEN`, `DISCORD_GUILD_ID` and `JEVMODEL_API_KEY`.
 3. `./target/release/jev-discord-bot` - logs `registered 1 guild command(s)`.
-4. In the test guild: `/jev choice question:Where should the team eat? options:pizza, sushi, tacos`.
+4. In the test guild: `/jev choice question:Where should the team eat? options:pizza, sushi, tacos`
+   and `/jev score text:Billed twice, wants a refund today. question:How urgent is this? levels:routine, soon, urgent, critical`.
 
 Logs carry the interaction id, option count, picked index, probability,
 confidence, input tokens and latency - never tokens, keys or the user's text.
