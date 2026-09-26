@@ -62,7 +62,10 @@ check "rollback -> v1" '[ "$(readlink "$T/root/opt/jev-discord-bot/jev-discord-b
 check "rollback twice -> v2" '[ "$(readlink "$T/root/opt/jev-discord-bot/jev-discord-bot")" = jev-discord-bot-2222222bbbbb ]'
 
 : >"$OUT"; run env JEV_DEPLOY_PROC=/proc bash "$REPO/deploy/install.sh" "$T/bin/v2" 2222222bbbbb --start
-if pgrep -f 'target/release/jev-discord-bot' >/dev/null; then
+# Decide with the scripts' own exe-based detection (deploy/lib.sh): a
+# `pgrep -f` here would match any shell whose command line merely mentions
+# the path, including the one running this test.
+if (PROC=/proc OPT=$T/root/opt/jev-discord-bot; . "$REPO/deploy/lib.sh"; [ -n "$(adhoc_bots)" ]); then
     check "--start refused while ad-hoc bot runs" 'grep -q "ad-hoc jev-discord-bot is still running" "$OUT" && ! grep -q "\[dry-run\] systemctl restart" "$OUT"'
 else
     echo "SKIP --start refusal (no ad-hoc bot running)"
