@@ -1,8 +1,15 @@
 # jev-discord-bot
 
-Discord bot that asks Jev, TypeSafe's System One decision model
-([docs.typesafe.ai](https://docs.typesafe.ai)), typed questions. Slices JEV-01 `/jev choice`,
-JEV-02 `/jev score` and JEV-03 `/jev noul`.
+A small Rust Discord bot that hands off a decision to **Jev**, [TypeSafe](https://typesafe.ai)'s
+System One decision model, and posts the answer back to the channel. It needs
+a Discord bot token and a [TypeSafe API key](https://console.typesafe.ai/keys)
+(see [Setup](#setup)); nothing else to run it.
+
+Three slash commands, one TypeSafe call each:
+
+- `/jev choice` - pick one option out of several
+- `/jev score` - rate something on a named scale
+- `/jev noul` - answer a yes/no question with a probability
 
 ```
 /jev choice question:<what to decide> options:<a, b, c> [context:<background>]
@@ -305,6 +312,7 @@ receipt to defer acknowledged, which must stay under Discord's 3 s),
 
 ## Results
 
-- Offline: fixed commits and evidence are on the board (#1-#4).
+- Offline: `cargo test --offline` covers choice, score and noul against a
+  fake TypeSafe server, plus one end-to-end run against a fake Discord.
 - Live Jev contract: see "Live evidence" above.
-- Live Discord smoke: pending `DISCORD_GUILD_ID`.
+- Deployed on a systemd service; see "Deploy" above.

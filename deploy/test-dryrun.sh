@@ -40,7 +40,12 @@ check "env mode 0640" '[ "$(stat -c %a "$ENVF")" = 640 ]'
 check "etc dir mode 0750" '[ "$(stat -c %a "$T/root/etc/jev-discord-bot")" = 750 ]'
 check "current -> v1" '[ "$(readlink "$T/root/opt/jev-discord-bot/jev-discord-bot")" = jev-discord-bot-1111111aaaaa ]'
 check "unit installed" 'cmp -s "$REPO/deploy/jev-discord-bot.service" "$T/root/etc/systemd/system/jev-discord-bot.service"'
-check "dry-run chown/useradd/enable" 'grep -q "\[dry-run\] useradd" "$OUT" && grep -q "\[dry-run\] systemctl enable" "$OUT"'
+# useradd only runs when jevbot does not exist yet on this host.
+if id jevbot >/dev/null 2>&1; then
+    check "existing jevbot user reused, chown+enable dry-run" 'grep -q "user jevbot exists" "$OUT" && ! grep -q "\[dry-run\] useradd" "$OUT" && grep -q "\[dry-run\] chown root:jevbot" "$OUT" && grep -q "\[dry-run\] systemctl enable" "$OUT"'
+else
+    check "dry-run useradd/chown/enable" 'grep -q "\[dry-run\] useradd" "$OUT" && grep -q "\[dry-run\] chown root:jevbot" "$OUT" && grep -q "\[dry-run\] systemctl enable" "$OUT"'
+fi
 
 : >"$OUT"; run bash "$REPO/deploy/install.sh" "$T/bin/v1" 1111111aaaaa "$T/src.env"
 check "rerun idempotent" 'grep -q "already installed" "$OUT" && grep -q "current already" "$OUT" && grep -q "left unchanged" "$OUT" && ! [ -e "$T/root/opt/jev-discord-bot/previous" ]'

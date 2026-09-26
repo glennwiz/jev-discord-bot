@@ -1,2 +1,6 @@
 /target
 .env
+.env.local
+spawn_prompts/
+logs/
+*.log
