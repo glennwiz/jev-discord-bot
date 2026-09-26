@@ -304,7 +304,11 @@ impl Bot {
     /// With `close_stderr_after`, the test stops reading the bot's stderr and
     /// closes its end of the pipe right after the first line starting with
     /// that prefix - like a killed `tee` - so later writes get EPIPE.
-    fn start_with(discord_port: u16, jev_port: u16, close_stderr_after: Option<&'static str>) -> Bot {
+    fn start_with(
+        discord_port: u16,
+        jev_port: u16,
+        close_stderr_after: Option<&'static str>,
+    ) -> Bot {
         // Empty working dir: no .env can leak real credentials in.
         let cwd = std::env::temp_dir().join(format!("jev-e2e-{}", std::process::id()));
         std::fs::create_dir_all(&cwd).unwrap();
@@ -646,7 +650,11 @@ async fn broken_stderr_world() -> BrokenStderrWorld {
     let fail_edits: FailEdits = Arc::new(Mutex::new(Vec::new()));
     let discord_port = http_server(discord_handler(ws_port, fail_edits), discord_log.clone()).await;
     let jev_queue: JevQueue = Arc::new(Mutex::new(VecDeque::new()));
-    let jev_port = http_server(jev_handler(jev_queue.clone()), Arc::new(Mutex::new(Vec::new()))).await;
+    let jev_port = http_server(
+        jev_handler(jev_queue.clone()),
+        Arc::new(Mutex::new(Vec::new())),
+    )
+    .await;
     let bot = Bot::start_with(discord_port, jev_port, Some("registered "));
     wait_for("READY and command registration", 20, &bot, || {
         bot.log().iter().any(|l| l.starts_with("registered "))
@@ -654,7 +662,12 @@ async fn broken_stderr_world() -> BrokenStderrWorld {
     .await;
     // Give the reader thread a moment to drop its end of the pipe.
     tokio::time::sleep(Duration::from_millis(200)).await;
-    BrokenStderrWorld { tx, discord_log, jev_queue, bot }
+    BrokenStderrWorld {
+        tx,
+        discord_log,
+        jev_queue,
+        bot,
+    }
 }
 
 /// JEV-06: the bot's stderr reader is gone (its `tee` was killed), then
@@ -665,7 +678,11 @@ async fn sigterm_exits_even_when_stderr_is_broken() {
     let mut w = broken_stderr_world().await;
     let pid = w.bot.child.id().to_string();
     let signalled = Instant::now();
-    assert!(Command::new("kill").args(["-TERM", &pid]).status().unwrap().success());
+    assert!(Command::new("kill")
+        .args(["-TERM", &pid])
+        .status()
+        .unwrap()
+        .success());
     let limit = Duration::from_secs(15 + 5);
     let status = loop {
         if let Some(s) = w.bot.child.try_wait().unwrap() {
@@ -689,14 +706,24 @@ async fn commands_are_answered_even_when_stderr_is_broken() {
         200,
         answer("noul", json!({"type": "noul", "noul": 0.42})),
     ));
-    let (_, d) = interaction("tok-broken-stderr", "noul", &[("text", "t"), ("question", "Yes?")]);
+    let (_, d) = interaction(
+        "tok-broken-stderr",
+        "noul",
+        &[("text", "t"), ("question", "Yes?")],
+    );
     w.tx.send(d).unwrap();
     let dlog = || w.discord_log.lock().unwrap().clone();
     wait_for("reply edit with a broken stderr", 10, &w.bot, || {
         find(&dlog(), "PATCH", "tok-broken-stderr", "@original").is_some()
     })
     .await;
-    let edit = find(&dlog(), "PATCH", "tok-broken-stderr", "@original").unwrap().body.clone();
-    assert!(edit["content"].to_string().contains("**P(yes):** 0.42"), "{edit}");
+    let edit = find(&dlog(), "PATCH", "tok-broken-stderr", "@original")
+        .unwrap()
+        .body
+        .clone();
+    assert!(
+        edit["content"].to_string().contains("**P(yes):** 0.42"),
+        "{edit}"
+    );
     assert!(w.bot.alive());
 }
