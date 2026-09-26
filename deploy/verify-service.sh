@@ -15,6 +15,11 @@
 # Steps: 1 versions/state  2 kill -9 -> restart  3 systemctl stop -> graceful
 # 4 start  5 rollback exercise  6 TypeSafe error path  7 Discord evidence
 # 8 secret scan. Ends with the service running the pinned release.
+#
+# Pacing: the unit allows 5 starts per 300 s (StartLimitBurst), so every
+# deliberate (re)start is preceded by `systemctl reset-failed`; and Discord
+# rate-limits gateway logins and command registration, so after every
+# restart we wait for "registered" before the next one (REG_WAIT).
 set -uo pipefail
 set +x
 
@@ -24,6 +29,7 @@ ENVF=/etc/jev-discord-bot/env
 DROPIN_DIR=/run/systemd/system/$UNIT.d
 DROPIN=$DROPIN_DIR/zz-verify-error-path.conf
 ERR_ENV=/run/jev-verify-error-path.env
+REG_WAIT=90
 
 READONLY=0 ERROR_PATH=0 ARGS=()
 for a in "$@"; do
@@ -41,8 +47,12 @@ bad() { printf 'FAIL %s\n' "$*"; FAILED=1; }
 FAILED=0
 prop() { systemctl show "$UNIT" -p "$1" --value; }
 now_ms() { date +%s%3N; }
-# Journal lines of this unit since an epoch in ms.
-journal_since() { journalctl -u "$UNIT" --since "@$(( $1 / 1000 ))" -o short-iso --no-pager 2>/dev/null; }
+# Journal lines of this unit at or after an epoch in ms (millisecond
+# precise: --since only takes whole seconds, so filter the rest in awk).
+journal_since() {
+    journalctl -u "$UNIT" --since "@$(( $1 / 1000 ))" -o short-unix --no-pager 2>/dev/null |
+        awk -v t="$1" '{ split($1, a, "."); if (a[1] * 1000 + substr(a[2] "000", 1, 3) >= t) print }'
+}
 # Wait (<= $2 s) until the unit is active with a MainPID other than $1.
 wait_new_pid() {
     local old=$1 limit=$2 t0 pid
@@ -67,6 +77,8 @@ wait_registered() {
     done
     return 1
 }
+# Clear the start-rate counter before a deliberate (re)start (see Pacing).
+reset() { systemctl reset-failed "$UNIT" 2>/dev/null || true; }
 running_version() { local p; p=$(prop MainPID); readlink "/proc/$p/exe" 2>/dev/null | sed 's|.*/||'; }
 
 step "1. versions and state ($(date -u +%FT%TZ))"
@@ -92,12 +104,13 @@ if [ "$READONLY" = 0 ]; then
     [ -x "$PIN/deploy/install.sh" ] && [ -x "$PREV/target/release/jev-discord-bot" ] || { echo "verify: release dirs incomplete" >&2; exit 2; }
 
     step "2. kill -9 MainPID -> systemd restarts it (Restart=on-failure, RestartSec=5)"
+    reset
     old=$(prop MainPID) n0=$(prop NRestarts) t=$(now_ms)
     kill -KILL "$old"
     if res=$(wait_new_pid "$old" 30); then
         echo "killed $old; new MainPID ${res% *} after ${res#* } ms; NRestarts $n0 -> $(prop NRestarts)"
         [ "$(prop NRestarts)" = $(( n0 + 1 )) ] && ok "restarted after kill -9, NRestarts+1" || bad "NRestarts did not increase by 1"
-        wait_registered "$t" 30 && ok "reconnected (registered guild command)" || bad "no re-registration after restart"
+        wait_registered "$t" $REG_WAIT && ok "reconnected (registered guild command)" || bad "no re-registration after restart"
     else
         bad "no restart within 30 s of kill -9"
     fi
@@ -115,21 +128,25 @@ if [ "$READONLY" = 0 ]; then
     [ "$(prop ExecMainStatus)" = 0 ] && ok "exit status 0" || bad "exit status $(prop ExecMainStatus)"
 
     step "4. systemctl start"
+    reset
     t=$(now_ms)
     systemctl start "$UNIT"
-    wait_registered "$t" 30 && ok "started and registered" || bad "no registration after start"
+    wait_registered "$t" $REG_WAIT && ok "started and registered" || bad "no registration after start"
 
     step "5. rollback exercise: install $PREV_C as current, then deploy/rollback.sh back to $PIN_C"
     echo "note: $PREV_C and $PIN_C differ only in deploy/tests/README, so their binaries are byte-identical;"
     echo "      this proves the switch+restart mechanism, not a behaviour change."
+    reset
+    t=$(now_ms)
     "$PIN/deploy/install.sh" "$PREV/target/release/jev-discord-bot" "$PREV_C" --start
-    sleep 1
+    wait_registered "$t" $REG_WAIT && ok "registered after install --start" || bad "no registration after install --start"
     [ "$(running_version)" = "jev-discord-bot-$PREV_C" ] && ok "running $PREV_C after install --start" || bad "running $(running_version), expected $PREV_C"
+    reset
+    t=$(now_ms)
     "$PIN/deploy/rollback.sh"
-    sleep 1
+    wait_registered "$t" $REG_WAIT && ok "registered after rollback" || bad "no registration after rollback"
     [ "$(running_version)" = "jev-discord-bot-$PIN_C" ] && ok "rolled back: running $PIN_C" || bad "running $(running_version), expected $PIN_C"
     [ "$(readlink $OPT/previous)" = "jev-discord-bot-$PREV_C" ] && ok "previous -> $PREV_C kept for a real rollback" || bad "previous link"
-    t=$(now_ms); wait_registered "$(( t - 5000 ))" 30 && ok "registered after rollback" || bad "no registration after rollback"
 
     if [ "$ERROR_PATH" = 1 ]; then
         step "6. TypeSafe error path: temporary base URL with a non-existent path (real TypeSafe 404, not billed)"
@@ -138,9 +155,10 @@ if [ "$READONLY" = 0 ]; then
         chmod 0644 "$ERR_ENV"
         printf '[Service]\n# Temporary, from deploy/verify-service.sh; removed at the end of step 6.\nEnvironmentFile=%s\n' "$ERR_ENV" >"$DROPIN"
         systemctl daemon-reload
+        reset
         t=$(now_ms)
         systemctl restart "$UNIT"
-        wait_registered "$t" 30 || bad "no registration with the error-path config"
+        wait_registered "$t" $REG_WAIT || bad "no registration with the error-path config"
         journal_since "$t" | grep -o 'jev_base_url: "[^"]*"'
         echo
         echo ">>> Now run ONE command in the test guild, e.g.:"
@@ -152,9 +170,10 @@ if [ "$READONLY" = 0 ]; then
         rm -f "$DROPIN" "$ERR_ENV"
         rmdir "$DROPIN_DIR" 2>/dev/null || true
         systemctl daemon-reload
+        reset
         t=$(now_ms)
         systemctl restart "$UNIT"
-        wait_registered "$t" 30 || bad "no registration after removing the error path"
+        wait_registered "$t" $REG_WAIT || bad "no registration after removing the error path"
         journal_since "$t" | grep -q 'jev_base_url: "https://api.typesafe.ai"' && ok "normal config restored" || bad "base URL not restored"
     fi
 fi
@@ -169,7 +188,8 @@ if [ "$(id -u)" = 0 ]; then
         case "$k" in DISCORD_TOKEN | TYPESAFE_API_KEY) ;; *) continue ;; esac
         v=${v%\"}; v=${v#\"}; v=${v%\'}; v=${v#\'}
         [ ${#v} -ge 12 ] || { bad "$k value too short to scan"; continue; }
-        n=$(journalctl -u "$UNIT" -o cat --no-pager 2>/dev/null | grep -cF -- "$v")
+        # Pattern via a file descriptor, never argv (argv shows in /proc/*/cmdline).
+        n=$(journalctl -u "$UNIT" -o cat --no-pager 2>/dev/null | grep -cF -f <(printf '%s\n' "$v"))
         echo "$k: occurrences=$n"
         [ "$n" = 0 ] || bad "$k value found in journal"
     done <"$ENVF"
