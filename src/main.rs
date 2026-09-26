@@ -2,6 +2,17 @@
 //! in one test guild and answers them through Jev. Feature logic lives in
 //! `choice/`, `score/` and `noul/`; this file is only glue.
 
+/// Log one line to stderr without ever panicking. `eprintln!` panics when
+/// stderr is a broken pipe (e.g. the `tee` it fed was killed); that once
+/// took down the shutdown path so the bot never exited (#6). Here a failed
+/// write is simply dropped. Defined before the modules so all can use it.
+macro_rules! log_line {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr().lock(), $($arg)*);
+    }};
+}
+
 mod choice;
 mod config;
 mod noul;
@@ -63,16 +74,16 @@ async fn shutdown_signal() {
         match signal(SignalKind::terminate()) {
             Ok(mut term) => {
                 tokio::select! {
-                    _ = term.recv() => eprintln!("shutdown: SIGTERM received"),
-                    _ = tokio::signal::ctrl_c() => eprintln!("shutdown: Ctrl-C received"),
+                    _ = term.recv() => log_line!("shutdown: SIGTERM received"),
+                    _ = tokio::signal::ctrl_c() => log_line!("shutdown: Ctrl-C received"),
                 }
                 return;
             }
-            Err(e) => eprintln!("shutdown: cannot watch SIGTERM ({e}); Ctrl-C only"),
+            Err(e) => log_line!("shutdown: cannot watch SIGTERM ({e}); Ctrl-C only"),
         }
     }
     let _ = tokio::signal::ctrl_c().await;
-    eprintln!("shutdown: Ctrl-C received");
+    log_line!("shutdown: Ctrl-C received");
 }
 
 fn jev_command() -> CreateCommand {
@@ -231,7 +242,7 @@ impl Timing {
     /// Log once the reply has been edited.
     fn log(&self, deferred: Instant, answered: Instant) {
         let edited = Instant::now();
-        eprintln!(
+        log_line!(
             "{} timing: interaction={} gateway_ms={} defer_ms={} jev_ms={} edit_ms={} total_ms={}",
             self.command,
             self.interaction,
@@ -282,7 +293,7 @@ impl Handler {
             .await
         {
             Ok(out) => {
-                eprintln!(
+                log_line!(
                     "choice ok: interaction={} options={} choice_index={:?} p={:.3} confidence={:.3} input_tokens={:?} ms={}",
                     cmd.id,
                     req.options.len(),
@@ -295,7 +306,7 @@ impl Handler {
                 render::outcome(&req, &out)
             }
             Err(e) => {
-                eprintln!(
+                log_line!(
                     "choice failed: interaction={} error={} ms={}",
                     cmd.id,
                     e,
@@ -339,7 +350,7 @@ impl Handler {
             .await
         {
             Ok(out) => {
-                eprintln!(
+                log_line!(
                     "score ok: interaction={} levels={} score={} confidence={:.3} input_tokens={:?} ms={}",
                     cmd.id,
                     req.levels.len(),
@@ -351,7 +362,7 @@ impl Handler {
                 score::render::outcome(&req, &out)
             }
             Err(e) => {
-                eprintln!(
+                log_line!(
                     "score failed: interaction={} error={} ms={}",
                     cmd.id,
                     e,
@@ -396,7 +407,7 @@ impl Handler {
             .await
         {
             Ok(out) => {
-                eprintln!(
+                log_line!(
                     "noul ok: interaction={} criteria={} p_yes={} input_tokens={:?} ms={}",
                     cmd.id,
                     req.criteria().is_some(),
@@ -407,7 +418,7 @@ impl Handler {
                 noul::render::outcome(&req, &out)
             }
             Err(e) => {
-                eprintln!(
+                log_line!(
                     "noul failed: interaction={} error={} ms={}",
                     cmd.id,
                     e,
@@ -427,14 +438,14 @@ impl Handler {
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
-        eprintln!("connected as {} (guild {})", ready.user.name, self.guild);
+        log_line!("connected as {} (guild {})", ready.user.name, self.guild);
         match self
             .guild
             .set_commands(&ctx.http, vec![jev_command()])
             .await
         {
-            Ok(cmds) => eprintln!("registered {} guild command(s)", cmds.len()),
-            Err(e) => eprintln!("command registration failed: {e}"),
+            Ok(cmds) => log_line!("registered {} guild command(s)", cmds.len()),
+            Err(e) => log_line!("command registration failed: {e}"),
         }
     }
 
@@ -456,7 +467,7 @@ impl EventHandler for Handler {
             _ => Ok(()),
         };
         if let Err(e) = result {
-            eprintln!("discord reply failed: interaction={} error={e}", cmd.id);
+            log_line!("discord reply failed: interaction={} error={e}", cmd.id);
         }
     }
 }
@@ -466,24 +477,24 @@ async fn main() {
     let cfg = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("config error: {e}");
+            log_line!("config error: {e}");
             std::process::exit(2);
         }
     };
-    eprintln!("config: {cfg:?}");
+    log_line!("config: {cfg:?}");
     let jev =
         JevClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout).unwrap_or_else(|e| {
-            eprintln!("jev client error: {e}");
+            log_line!("jev client error: {e}");
             std::process::exit(2);
         });
     let score =
         ScoreClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout).unwrap_or_else(|e| {
-            eprintln!("jev client error: {e}");
+            log_line!("jev client error: {e}");
             std::process::exit(2);
         });
     let noul =
         NoulClient::new(&cfg.jev_base_url, &cfg.api_key, cfg.jev_timeout).unwrap_or_else(|e| {
-            eprintln!("jev client error: {e}");
+            log_line!("jev client error: {e}");
             std::process::exit(2);
         });
     let in_flight = Arc::new(AtomicUsize::new(0));
@@ -497,35 +508,43 @@ async fn main() {
     // Slash commands arrive without privileged or message intents.
     let mut http = HttpBuilder::new(&cfg.discord_token);
     if let Some(proxy) = &cfg.discord_api_proxy {
-        eprintln!("WARN: DISCORD_API_PROXY is set: Discord HTTP goes to {proxy} (test seam, not for production)");
+        log_line!("WARN: DISCORD_API_PROXY is set: Discord HTTP goes to {proxy} (test seam, not for production)");
         http = http.proxy(proxy).ratelimiter_disabled(true);
     }
     let mut client = ClientBuilder::new_with_http(http.build(), GatewayIntents::empty())
         .event_handler(handler)
         .await
         .unwrap_or_else(|e| {
-            eprintln!("discord client error: {e}");
+            log_line!("discord client error: {e}");
             std::process::exit(1);
         });
 
     // On SIGTERM: stop taking new interactions by closing the gateway, then
     // let replies already in progress finish (bounded by DRAIN_TIMEOUT).
+    // The signal is awaited here, in main's own task rather than a detached
+    // one, so nothing on the shutdown path can fail silently and leave main
+    // waiting forever (#6): if it failed, main would fail with it.
     let shards = client.shard_manager.clone();
-    tokio::spawn(async move {
-        shutdown_signal().await;
-        shards.shutdown_all().await;
-    });
-    if let Err(e) = client.start().await {
-        eprintln!("gateway stopped: {e}");
-        std::process::exit(1);
+    tokio::select! {
+        result = client.start() => {
+            if let Err(e) = result {
+                log_line!("gateway stopped: {e}");
+                std::process::exit(1);
+            }
+        }
+        () = shutdown_signal() => {
+            if tokio::time::timeout(DRAIN_TIMEOUT, shards.shutdown_all()).await.is_err() {
+                log_line!("shutdown: gateway did not close within {DRAIN_TIMEOUT:?}");
+            }
+        }
     }
     let deadline = tokio::time::Instant::now() + DRAIN_TIMEOUT;
     while in_flight.load(Ordering::SeqCst) > 0 && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     match in_flight.load(Ordering::SeqCst) {
-        0 => eprintln!("shutdown: clean"),
-        n => eprintln!(
+        0 => log_line!("shutdown: clean"),
+        n => log_line!(
             "shutdown: {n} interaction(s) still in flight after {DRAIN_TIMEOUT:?}; exiting"
         ),
     }
