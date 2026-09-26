@@ -264,8 +264,13 @@ switch-back path (one Discord token, so only one bot may run).
   `cgroup_disable=memory`, so `MemoryMax=128M` has no effect there (the
   bot's resident size is ~11 MB). To enforce it, add
   `cgroup_enable=memory` to `/boot/firmware/cmdline.txt` and reboot.
-- The Pi's `jevbot` has shell `/usr/sbin/nologin`; `install.sh` now finds
-  `nologin` on Debian as well as Arch (`258a1b5`).
+- `jevbot`'s shell: the deployed `install.sh` (`38a475d`) created the user
+  with `/usr/bin/nologin`, which Debian does not have (useradd warned). It
+  was then fixed by hand, over plain ssh rather than in tmux, with
+  `sudo usermod -s /usr/sbin/nologin jevbot` (recorded afterwards in the Pi's
+  `~/jev-logs/deploy-38a475d.log`). `258a1b5` makes `install.sh` find
+  `nologin` on both Arch and Debian for future installs; it did not run for
+  this user.
 
 **Switch back to ArchBlackMage:** on the Pi
 `sudo systemctl disable --now jev-discord-bot`, then on ArchBlackMage
