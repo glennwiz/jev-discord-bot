@@ -62,7 +62,9 @@ BIN=${ARGS[0]} COMMIT=${ARGS[1]} ENV_SRC=${ARGS[2]:-}
 if id jevbot >/dev/null 2>&1; then
     say "user jevbot exists"
 else
-    priv useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/bin/nologin jevbot
+    # nologin lives in /usr/bin on Arch but /usr/sbin on Debian/Raspberry Pi OS.
+    priv useradd --system --user-group --no-create-home --home-dir /nonexistent \
+        --shell "$(command -v nologin || echo /usr/sbin/nologin)" jevbot
     say "created system user jevbot"
 fi
 
