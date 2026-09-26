@@ -229,9 +229,47 @@ Either path gives a binary for `aarch64-unknown-linux-gnu`.
   the built binary's highest symbol version is `GLIBC_2.34`
   (`objdump -T ... | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1`).
 
-**Left for JEV-05 (on the device):** run the binary on the Pi itself
-(glibc/loader match, TLS to Discord and TypeSafe, memory under
-`MemoryMax=128M`), and the systemd install below on real hardware.
+### Raspberry Pi: what is deployed (JEV-09, 2026-09-26)
+
+The bot runs on a **Raspberry Pi 500** (16 GB, Debian 12 bookworm aarch64,
+kernel 6.12.47+rpt-rpi-2712, glibc 2.36, systemd 252) as the systemd service
+below. ArchBlackMage keeps its install, stopped and disabled, as the
+switch-back path (one Discord token, so only one bot may run).
+
+- **Built natively on the Pi** from `38a475d` in a clean worktree
+  (`~/jev-release/38a475d`), rustup `--profile minimal --default-toolchain
+  1.98.1` (same compiler as the box): `cargo build --release --locked
+  --offline`, 3.5 min. Binary sha256 `f956be4748fae01aaefbf1c2b894cb0a3b2b37bd6e79f2f1a37f1e6267e67e13`,
+  ELF64 AArch64 PIE, highest symbol `GLIBC_2.34`. **This is the deployed one.**
+- For comparison, the zigbuild of the same commit on ArchBlackMage
+  (`.2.36` pin) is sha256 `284db32dd93060a273a0a027a277c46788662de6bd8ea78ccfcffc5b53e58b5f`
+  (stripped, also `GLIBC_2.34`) and also runs on the Pi. The hashes differ
+  because the linker and strip settings differ, not the source.
+- `d22cb9c` was built the same way (sha256 `0f871017…d0d305`) as the rollback
+  target; `/opt/jev-discord-bot/previous` points to it.
+- Env file: the box's `.env` copied host-to-host with `scp -3` (never
+  printed or stored on the operator's machine), turned into
+  `/etc/jev-discord-bot/env` (0640 root:jevbot) by `install.sh`, then
+  shredded.
+- Cut-over: `sudo deploy/install.sh <bin> 38a475d <.env>` on the Pi (install
+  + enable, no start); `sudo systemctl disable --now jev-discord-bot` on
+  ArchBlackMage; `sudo systemctl start jev-discord-bot` on the Pi.
+- Verified with `sudo deploy/verify-service.sh ~/jev-release/38a475d
+  ~/jev-release/d22cb9c --error-path`: VERIFY PASS (17/17) - kill -9
+  restart 5.2 s, graceful stop 641 ms exit 0, rollback to d22cb9c and back,
+  TypeSafe 404 error reply, no secrets in the journal. Real `/jev choice`,
+  `score` and `noul` answered by the Pi (defer 335-1565 ms, one TypeSafe
+  call each, ~300 ms).
+- **Memory limit not enforced on the Pi:** Raspberry Pi OS boots with
+  `cgroup_disable=memory`, so `MemoryMax=128M` has no effect there (the
+  bot's resident size is ~11 MB). To enforce it, add
+  `cgroup_enable=memory` to `/boot/firmware/cmdline.txt` and reboot.
+- The Pi's `jevbot` has shell `/usr/sbin/nologin`; `install.sh` now finds
+  `nologin` on Debian as well as Arch (`258a1b5`).
+
+**Switch back to ArchBlackMage:** on the Pi
+`sudo systemctl disable --now jev-discord-bot`, then on ArchBlackMage
+`sudo systemctl enable --now jev-discord-bot`. Never both at once.
 
 ## Deploy (systemd)
 
