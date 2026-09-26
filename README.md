@@ -316,3 +316,7 @@ receipt to defer acknowledged, which must stay under Discord's 3 s),
   fake TypeSafe server, plus one end-to-end run against a fake Discord.
 - Live Jev contract: see "Live evidence" above.
 - Deployed on a systemd service; see "Deploy" above.
+
+## License
+
+[MIT](LICENSE)
